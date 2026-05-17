@@ -8,6 +8,9 @@ authors = [{ name = "Neeraj Kumar Singh", email = "neeraj1909@gmail.com" }]
 
 dependencies = [
     "langchain>=0.0.300",
+    "langchain-openai>=0.0.3",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
     "langsmith>=0.2.0",
     "pydantic>=2.9",
     "requests>=2.31",
