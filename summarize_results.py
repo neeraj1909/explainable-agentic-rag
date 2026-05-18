@@ -5,9 +5,11 @@ from collections import Counter
 from datetime import datetime 
 from typing import Any, Dict, List, Optional
 
+from llm_client import get_llm_client
 from search_papers import search_papers
 
-def summarize_search_results(search_result: Dict[str, Any]) -> str:
+
+def summarize_search_results(search_result: Dict[str, Any], llm_client) -> str:
     """
     Summarize paper search results from arXiv or similar sources.
     
@@ -60,7 +62,9 @@ def summarize_search_results(search_result: Dict[str, Any]) -> str:
 
     summary_lines.append("")
     summary_lines.append("## Overall Takeaway")
-    #add takaway here
+    takeaway = generate_overall_takeaway(query, papers, llm_client)
+    summary_lines.append(takeaway)
+    summary_lines.append("")
     summary_lines.append("## Papers")
     summary_lines.append("")
     
@@ -72,8 +76,8 @@ def summarize_search_results(search_result: Dict[str, Any]) -> str:
         abstract = paper.get("abstract", "")
         arxiv_url = paper.get("arxiv_url", "")
         
-        short_summary = summarize_abstract(abstract)
-        
+        short_summary = summarize_abstract(abstract, llm_client)
+                
         summary_lines.append(f"### {index}. {title}")
         summary_lines.append("")
         summary_lines.append(f"- **Year:** {year or 'Unknown'}")
@@ -84,6 +88,10 @@ def summarize_search_results(search_result: Dict[str, Any]) -> str:
         
     return "\n".join(summary_lines)
 
+
+def call_llm(llm_client, prompt: str) -> str:
+    response = llm_client.invoke(prompt)
+    return response.content.strip()
 
 def extract_year(published: Optional[str]) -> Optional[int]:
     if not published:
@@ -104,23 +112,59 @@ def format_authors(authors: List[str], max_authors: int = 3) -> str:
     else:
         return ", ".join(authors[:max_authors]) + f", et al."
     
-    
-def summarize_abstract(abstract: str, max_sentences: int = 2) -> str:
-    """
-    Simple extractive summary:
-    take the first 1-2 sentences from the abstract
-    
-    Later, you can replace this with an LLm-based summarizer.
-    """
-    
-    if not abstract:
-        return "No abstract available"
-    
-    sentences = split_sentences(abstract)
-    selected = sentences[:max_sentences]
-    
-    return " ".join(selected)
 
+def generate_overall_takeaway(user_query: str, paper_summaries: list[dict], llm_client) -> str:
+    """
+    Generate an overall takeaway from the search results using an LLM.
+    
+    Input:
+        user_query: The original search query
+        paper_summaries: List of dicts with keys 'title', 'abstract', 'categories'
+        llm_client: An instance of an LLM client to generate the takeaway
+    
+    Output:
+        A string summarizing the overall insights from the papers in relation to the user query.
+    """
+    # Construct a prompt for the LLM
+    prompt = f"""
+        Given the following search query and paper summaries, provide an overall takeaway that captures the main insights and trends related to the query.
+        User searched for: {user_query}
+        Here are summaries of the retrieved papers: {json.dumps(paper_summaries)}
+        
+        Write an overall takeaway in 3-5 sentences.
+        Mention:
+        - Common themes across the papers
+        - dominant methodologies or approaches
+        - any notable gaps or future directions
+        - what the user should read first.
+        Do not invent claims beyond the provided summaries. 
+    """
+    # Call the LLM to generate the takeaway
+    return call_llm(llm_client, prompt)
+
+
+def summarize_abstract(abstract: str, llm_client) -> str:
+    """
+        Summarize the abstract of a paper in relation to the user's query using an LLM-based summarizer.
+    """
+    
+    # if not abstract:
+    #     return "No abstract available"
+    
+    # sentences = split_sentences(abstract)
+    # selected = sentences[:max_sentences]
+    
+    # return " ".join(selected)
+    prompt = f"""
+        You are summarizing an abstract of an academic paper for a literature search.
+        Abstract: {abstract}
+        
+        Return a concise summary of the abstract in 2-3 sentences, focusing on the aspects most relevant to the user's query.
+        Do not include information that is not present in the abstract.
+    """
+    # Call the LLM to generate the summary
+    response = call_llm(llm_client, prompt)
+    return response
 
 def split_sentences(text: str) -> List[str]:
     """
@@ -141,9 +185,10 @@ def main():
     
     query = " ".join(args.query)
     raw_result = search_papers(query, max_results=args.max_results)
+    llm_client = get_llm_client()
     if args.summary:
         payload = json.loads(raw_result)
-        print(summarize_search_results(payload))
+        print(summarize_search_results(payload, llm_client))
     else:
         print(raw_result)
 
