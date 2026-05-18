@@ -448,7 +448,9 @@ def search_papers(query: str, max_results: int = 10):
     # Preferred path: official structured Atom API.
     try:
         papers = _search_arxiv_api(query, max_results, sort_by)
-        return _results_payload(query, papers, retrieval_method="atom_api")
+        if papers:
+            return _results_payload(query, papers, retrieval_method="atom_api")
+        fallback_warning = "arXiv Atom API returned zero results. Used fallback search."
     except (ArxivApiUnavailable, requests.exceptions.Timeout) as exc:
         fallback_warning = f"{exc}. Used fallback search."
     except requests.exceptions.RequestException as exc:
