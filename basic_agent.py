@@ -1,41 +1,57 @@
-# Create a minimal agent with one LLM and 2–3 Python tools. Use tools related to your 
-# profile, such as search_papers, summarize_claim, and calculate_faithfulness_stub.
-import os
+import argparse
+import json 
+
 from dotenv import load_dotenv
 from langchain.agents import create_agent
-from langchain_openai import ChatOpenAI
 
-load_dotenv()
+from faithfulness import calculate_faithfulness_stub as calculate_faithfulness
+from llm_client import get_llm_client
+from summarize_results import summarize_claim
+from search_papers import search_papers
 
-llm = ChatOpenAI(
-    model=os.environ.get("LITELLM_MODEL"),
-    api_key=os.environ.get("LITELLM_API_KEY"),
-    base_url=os.environ.get("LITELLM_API_BASE"),
-)
 
-def search_papers(query):
-    """Placeholder function to simulate searching for papers"""
-    return f"Search results for '{query}'"
+def build_agent():
+    load_dotenv()
+    llm = get_llm_client()
+    
+    def summarize_search_results(search_result_json: str) -> str:
+        """Summarize JSON arXiv search results"""
+        search_result = json.loads(search_result_json)
+        return summarize_claim(search_result, llm)
 
-def summarize_claim(claim):
-    """Placeholder function to simulate summarizing a claim"""
-    return f"Summary of claim: '{claim}'"
+    system_prompt = (
+        "You are a research assistant. Search for papers before answering. "
+        "Ground claims in retrieved titles, abstracts, and URLs. "
+        "Do not invent papers or findings. If evidence is weak, say so. "
+        "Use the faithfulness tool to check whether your final answer is supported."
+    )
 
-def calculate_faithfulness_stub():
-    """Placeholder function to simulate calculating faithfulness"""
-    return "Faithfulness score: 0.85"
+    # Create the agent with the specified tools
+    agent = create_agent(
+        model=llm,
+        tools=[
+            search_papers, 
+            summarize_search_results, 
+            calculate_faithfulness,
+        ], 
+        system_prompt=system_prompt,
+    )
+    
+    return agent
 
-# Create the agent with the specified tools
-agent = create_agent(
-    model=llm,
-    tools=[search_papers, summarize_claim, calculate_faithfulness_stub],
-    system_prompt="You are a helpful assistant",
-)
 
-# Example usage of the agent
-query = "What are the latest papers on AI ethics?"
-result = agent.invoke(
-    {"messages": [{"role": "user", "content": query}]}
-)
+def main():
+    parser = argparse.ArgumentParser(description="Run the research assistant agent.")
+    parser.add_argument("query", nargs="+", help="User search query")
+    args = parser.parse_args()
+    
+    agent = build_agent()
+    result = agent.invoke(
+        {"messages": [{"role": "user", "content": " ".join(args.query)}]}
+    )
+    print(result["messages"][-1].content)
+    
 
-print(result["messages"][-1].content_blocks[0])
+if __name__ == "__main__":
+    main()
+ 
