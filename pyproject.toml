@@ -14,4 +14,8 @@ dependencies = [
     "langsmith>=0.2.0",
     "pydantic>=2.9",
     "requests>=2.31",
+    "pytest>=8.0.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
