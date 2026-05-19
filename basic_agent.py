@@ -1,5 +1,6 @@
 import argparse
-import json 
+import json
+from typing import Any
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
@@ -10,6 +11,8 @@ from faithfulness import calculate_faithfulness_stub as calculate_faithfulness
 from llm_client import get_llm_client
 from summarize_results import summarize_claim
 from search_papers import search_papers
+from progress import emit_progress
+from observability import setup_phoenix_tracing
 
 
 def build_agent(max_results: int = 5):
@@ -18,12 +21,76 @@ def build_agent(max_results: int = 5):
     
     def search_papers_with_limit(query: str) -> str:
         """Search arXiv papers using the configured max_results limit."""
-        return search_papers(query, max_results=max_results)
+        emit_progress(
+            "retrieval_started",
+            "Searching arXiv papers",
+            query=query,
+            max_results=max_results,
+        )
+        
+        result = search_papers(query, max_results=max_results)
+        
+        emit_progress(
+            "retrieval_finished",
+            "Finished arXiv retrieval",
+            query=query,
+        )
+        
+        return result
     
     def summarize_search_results(search_result_json: str) -> str:
-        """Summarize JSON arXiv search results"""
+        """Summarize JSON arXiv search results."""
         search_result = json.loads(search_result_json)
-        return summarize_claim(search_result, llm)
+        paper_count = len(search_result.get("results", []))
+
+        emit_progress(
+            "summarization_started",
+            "Summarizing search results",
+            paper_count=paper_count,
+        )
+
+        summary = summarize_claim(search_result, llm)
+
+        emit_progress(
+            "summarization_finished",
+            "Finished summarizing search results",
+            paper_count=paper_count,
+        )
+
+        return summary
+
+    def calculate_faithfulness_with_progress(
+        answer: str,
+        evidence: str,
+        threshold: float = 0.35,
+    ) -> str:
+        """Estimate whether an answer is faithful to provided evidence."""
+        emit_progress(
+            "faithfulness_started",
+            "Checking whether the answer is supported by retrieved evidence",
+            threshold=threshold,
+        )
+
+        result = calculate_faithfulness(
+            answer=answer,
+            evidence=evidence,
+            threshold=threshold,
+        )
+
+        try:
+            payload = json.loads(result)
+        except json.JSONDecodeError:
+            payload = {}
+
+        emit_progress(
+            "faithfulness_finished",
+            "Finished faithfulness check",
+            faithfulness_score=payload.get("faithfulness_score"),
+            verdict=payload.get("verdict"),
+            unsupported_claim_count=len(payload.get("unsupported_claims", [])),
+        )
+
+        return result
 
     system_prompt = (
         "You are a research assistant. Search for papers before answering. "
@@ -46,7 +113,7 @@ def build_agent(max_results: int = 5):
         tools=[
             search_papers_with_limit,
             summarize_search_results,
-            calculate_faithfulness,
+            calculate_faithfulness_with_progress,
         ], 
         system_prompt=system_prompt,
         response_format =ToolStrategy(AgentResponse),
@@ -93,25 +160,101 @@ def format_agent_response(response: AgentResponse) -> str:
     return "\n".join(lines)
 
 
+def _tool_call_name(tool_call: Any) -> str | None:
+    """Extract a displayable tool name from LangChain tool-call objects."""
+    if isinstance(tool_call, dict):
+        return tool_call.get("name") or tool_call.get("function", {}).get("name")
+    return getattr(tool_call, "name", None)
+
+
+def _print_agent_update(update: dict[str, Any], seen_tool_call_ids: set[str]) -> AgentResponse | None:
+    """Print progress from one LangGraph/LangChain update chunk."""
+    messages = update.get("messages", [])
+    if not isinstance(messages, list):
+        messages = [messages]
+
+    for message in messages:
+        for tool_call in getattr(message, "tool_calls", []) or []:
+            tool_name = _tool_call_name(tool_call)
+            tool_call_id = (
+                tool_call.get("id")
+                if isinstance(tool_call, dict)
+                else getattr(tool_call, "id", None)
+            )
+            dedupe_key = tool_call_id or tool_name or repr(tool_call)
+            if tool_name and dedupe_key not in seen_tool_call_ids:
+                seen_tool_call_ids.add(dedupe_key)
+                print(f"[tool_selected] {tool_name}")
+
+    structured_response = update.get("structured_response")
+    if structured_response is not None:
+        print("[answer_generated] Structured answer ready")
+        return structured_response
+
+    return None
+
+
+def stream_agent_response(agent: Any, user_message: str) -> AgentResponse | None:
+    """Run the agent with progress streaming and return the final structured response."""
+    print("[run_started] Received query")
+
+    structured_response = None
+    seen_tool_call_ids: set[str] = set()
+
+    for mode, chunk in agent.stream(
+        {"messages": [{"role": "user", "content": user_message}]},
+        stream_mode=["updates", "custom"],
+    ):
+        if mode == "custom":
+            event = chunk.get("event", "progress")
+            message = chunk.get("message", "")
+            data = chunk.get("data") or {}
+            detail = f" {json.dumps(data, ensure_ascii=False)}" if data else ""
+            print(f"[{event}] {message}{detail}")
+            continue
+
+        if mode != "updates" or not isinstance(chunk, dict):
+            continue
+
+        for update in chunk.values():
+            if not isinstance(update, dict):
+                continue
+            maybe_response = _print_agent_update(update, seen_tool_call_ids)
+            if maybe_response is not None:
+                structured_response = maybe_response
+
+    return structured_response
+
+
 def main():
     parser = argparse.ArgumentParser(description="Run the research assistant agent.")
     parser.add_argument("--query", required=True, help="User search query")
     parser.add_argument("--max-results", type=int, default=5, help="Maximum papers to retrieve")
     parser.add_argument("--summary", action="store_true", help="Return summarized Markdown output")
     parser.add_argument("--json", action="store_true", help="Print raw JSON output")
+    parser.add_argument("--stream", action="store_true", help="Stream the agent's response in real-time")
     
     args = parser.parse_args()
-    
+
+    # Load .env and configure Phoenix/OpenInference before constructing or
+    # running LangChain objects, so the agent/LLM/tool spans are captured.
+    load_dotenv()
+    setup_phoenix_tracing()
+
     agent = build_agent(max_results=args.max_results)
-    
+
     user_message = args.query
-    
-    result = agent.invoke(
-        {"messages": [{"role": "user", "content": user_message}]}
-    )
-    
-    structured_response = result["structured_response"]
-    
+
+    if args.stream:
+        structured_response = stream_agent_response(agent, user_message)
+        if structured_response is None:
+            raise RuntimeError("Streaming run finished without a structured response.")
+    else:
+        result = agent.invoke(
+            {"messages": [{"role": "user", "content": user_message}]}
+        )
+        structured_response = result["structured_response"]
+
     if args.json:
         print(structured_response.model_dump_json(indent=2))
     else:
