@@ -9,7 +9,7 @@ from llm_client import get_llm_client
 from search_papers import search_papers
 
 
-def summarize_search_results(search_result: Dict[str, Any], llm_client) -> str:
+def summarize_claim(search_result: Dict[str, Any], llm_client) -> str:
     """
     Summarize paper search results from arXiv or similar sources.
     
@@ -188,7 +188,7 @@ def main():
     llm_client = get_llm_client()
     if args.summary:
         payload = json.loads(raw_result)
-        print(summarize_search_results(payload, llm_client))
+        print(summarize_claim(payload, llm_client))
     else:
         print(raw_result)
 
