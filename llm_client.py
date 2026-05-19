@@ -10,4 +10,5 @@ def get_llm_client():
         model=os.environ.get("LITELLM_MODEL"),
         api_key=os.environ.get("LITELLM_API_KEY"),
         base_url=os.environ.get("LITELLM_API_BASE"),
+        streaming=os.environ.get("LITELLM_STREAMING", "true").lower() == "true",
     )
