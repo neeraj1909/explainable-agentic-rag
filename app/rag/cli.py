@@ -66,11 +66,11 @@ def _to_jsonable(value: Any) -> Any:
 def extract_final_ai_answer(message: list[dict]) -> str:
     for message in reversed(message):
         if message.get("type") == "ai" and message.get("content", "").strip():
-            return message[content].strip()
+            return message["content"].strip()
     return "No final answer found."
 
 
-def extract_tool_calls(message: list[dict]):
+def extract_tool_calls(messages: list[dict]):
     calls = []
     
     for message in messages:
@@ -104,7 +104,7 @@ def extract_retrieved_sources(messages: list[dict]) -> list[dict]:
             }
             
             key = (source["source"], source["chunk_id"], source["page"])
-            if key not in seen():
+            if key not in seen:
                 seen.add(key)
                 sources.append(source)
                 
