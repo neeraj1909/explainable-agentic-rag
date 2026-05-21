@@ -16,7 +16,7 @@ def _sentences(text: str) -> list[str]:
     ]
     
     
-def _tokens(text: str) -> list[str]:
+def _tokens(text: str) -> set[str]:
     return {
         token.lower()
         for token in re.findall(r"[a-zA-Z][a-zA-Z0-9_-]+", text)

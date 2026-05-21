@@ -121,108 +121,96 @@ flowchart TD
 
 ---
 
-## Suggested Repository Structure
+## Repository Structure
+
+Current implementation is organized to match the PRP's suggested `app/` layout
+while leaving Day-2/Day-3 modules ready for incremental implementation.
 
 ```text
 .
 ├── README.md
 ├── .env.example
-├── requirements.txt
 ├── pyproject.toml
+├── uv.lock
 ├── app/
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
+│   ├── observability.py
+│   ├── progress.py
 │   ├── schemas.py
 │   ├── tools/
+│   │   ├── __init__.py
 │   │   ├── retrieval_tools.py
 │   │   ├── verification_tools.py
 │   │   └── attribution_tools.py
 │   ├── rag/
-│   │   ├── ingest.py
-│   │   ├── retriever.py
-│   │   ├── reranker.py
-│   │   └── prompts.py
+│   │   └── __init__.py
 │   ├── graphs/
-│   │   ├── state.py
-│   │   ├── nodes.py
-│   │   ├── agentic_rag_graph.py
-│   │   └── multi_agent_graph.py
+│   │   └── __init__.py
 │   └── evaluation/
-│       ├── eval_dataset.jsonl
-│       ├── run_ragas_eval.py
-│       ├── run_langsmith_eval.py
-│       └── evaluation_report.md
+│       └── __init__.py
 ├── notebooks/
-│   ├── 01_langchain_basic_agent.ipynb
-│   ├── 02_agentic_rag_eval.ipynb
-│   └── 03_langgraph_agentic_rag.ipynb
 ├── tests/
-│   ├── test_tools.py
-│   ├── test_schemas.py
-│   ├── test_retrieval.py
-│   └── test_graph_routes.py
+│   └── test_schemas.py
 └── docs/
-    ├── architecture.md
-    ├── langsmith_traces.md
-    ├── failure_cases.md
-    └── interview_cheatsheet.md
 ```
 
 ---
 
 ## Setup
 
-> Implementation files are expected to follow the structure above. Once dependencies are added, use the following setup flow.
+This project uses `uv` with dependencies declared in `pyproject.toml`.
 
 ```bash
 git clone <repo-url>
 cd explainable-agentic-rag
 
-python -m venv .venv
-source .venv/bin/activate
-
-pip install -r requirements.txt
+uv sync
 cp .env.example .env
 ```
 
-Example environment variables:
+Configure `.env` with your LiteLLM/OpenAI-compatible endpoint and tracing settings:
 
 ```bash
-OPENAI_API_KEY=your_openai_key
-LANGSMITH_API_KEY=your_langsmith_key
-LANGSMITH_TRACING=true
-LANGSMITH_PROJECT=explainable-agentic-rag
+LITELLM_MODEL=chatgpt/gpt-5.5
+LITELLM_API_KEY=your_key
+LITELLM_API_BASE=https://your-litellm-or-openai-compatible-endpoint
+LITELLM_STREAMING=true
+PHOENIX_PROJECT_NAME=explainable-agentic-rag
+PHOENIX_COLLECTOR_ENDPOINT=http://10.20.30.1:16006/v1/traces
 ```
 
 ---
 
 ## Usage Targets
 
-### Basic LangChain agent
+### Day-1 Basic LangChain agent
+
+After the package cleanup, run the agent as a module from the repository root:
 
 ```bash
-python app/main.py --mode claim-assistant --query "Does reranking improve RAG faithfulness?"
+uv run python3 -m app.main \
+    --query "Does reranking improve RAG faithfulness?" \
+    --max-results 10 \
+    --stream
 ```
 
-### Agentic RAG
+Optional JSON output:
 
 ```bash
-python app/main.py --mode agentic-rag --query "Compare baseline RAG and agentic RAG for attribution-heavy questions."
+uv run python3 -m app.main \
+    --query "Does reranking improve RAG faithfulness?" \
+    --max-results 10 \
+    --stream \
+    --json
 ```
 
-### LangGraph workflow
+### Day-2+ targets
 
-```bash
-python app/main.py --mode langgraph --thread-id demo-001 --query "What evidence supports this claim?"
-```
-
-### Evaluation
-
-```bash
-python app/evaluation/run_ragas_eval.py
-python app/evaluation/run_langsmith_eval.py
-```
+The Day-2 RAG, LangGraph workflow, and evaluation commands will be added as the
+corresponding modules are implemented under `app/rag/`, `app/graphs/`, and
+`app/evaluation/`.
 
 ---
 

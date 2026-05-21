@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from schemas import AgentResponse, SourceUsed, NextAction
+from app.schemas import AgentResponse, SourceUsed, NextAction
 
 
 def test_valid_agent_response():

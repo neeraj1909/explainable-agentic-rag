@@ -5,14 +5,13 @@ from typing import Any
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
-from schemas import AgentResponse
 
-from faithfulness import calculate_faithfulness_stub as calculate_faithfulness
-from llm_client import get_llm_client
-from summarize_results import summarize_claim
-from search_papers import search_papers
-from progress import emit_progress
-from observability import setup_phoenix_tracing
+from app.config import get_llm_client
+from app.observability import setup_phoenix_tracing
+from app.progress import emit_progress
+from app.schemas import AgentResponse
+from app.tools.retrieval_tools import search_papers, summarize_claim
+from app.tools.verification_tools import calculate_faithfulness_stub as calculate_faithfulness
 
 
 def build_agent(max_results: int = 5):

@@ -7,14 +7,17 @@ then through a direct HTML request. All paths are normalized into the same JSON
 shape so the rest of the agent/RAG project can consume results consistently.
 """
 
+import argparse
 import json
 import re
 import shutil
 import subprocess
 import time
 import xml.etree.ElementTree as ET
+from collections import Counter
 from datetime import datetime
 from html import unescape
+from typing import Any
 from urllib.parse import urlencode
 
 import requests
@@ -491,7 +494,168 @@ def search_papers(query: str, max_results: int = 10):
         )
 
 
+def summarize_claim(search_result: dict[str, Any], llm_client) -> str:
+    """Summarize arXiv search results into an evidence-grounded Markdown brief."""
+
+    query = search_result.get("query", "Unknown query")
+    source = search_result.get("source", "Unknown source")
+    retrieval_method = search_result.get("retrieval_method", "Unknown method")
+    papers = search_result.get("results", [])
+
+    if not papers:
+        return f"No papers found for query: {query}"
+
+    categories: Counter[str] = Counter()
+    years: list[int] = []
+
+    for paper in papers:
+        categories.update(paper.get("categories", []))
+        year = extract_year(paper.get("published"))
+        if year is not None:
+            years.append(year)
+
+    summary_lines = [
+        "# Search Summary",
+        "",
+        f"**Query:** {query}",
+        f"**Source:** {source}",
+        f"**Retrieval Method:** {retrieval_method}",
+        f"**Total Papers Found:** {len(papers)}",
+    ]
+
+    if years:
+        summary_lines.append(f"**Publication Year Range:** {min(years)}-{max(years)}")
+
+    if categories:
+        top_categories = ", ".join(
+            f"{category} ({count})" for category, count in categories.most_common(5)
+        )
+        summary_lines.append(f"**Top Categories:** {top_categories}")
+
+    summary_lines.extend([
+        "",
+        "## Overall Takeaway",
+        generate_overall_takeaway(query, papers, llm_client),
+        "",
+        "## Papers",
+        "",
+    ])
+
+    for index, paper in enumerate(papers, start=1):
+        title = paper.get("title", "Untitled")
+        authors = paper.get("authors", [])
+        year = extract_year(paper.get("published"))
+        abstract = paper.get("abstract", "")
+        arxiv_url = paper.get("arxiv_url", "")
+
+        summary_lines.extend([
+            f"### {index}. {title}",
+            "",
+            f"- **Year:** {year or 'Unknown'}",
+            f"- **Authors:** {format_authors(authors)}",
+            f"- **Summary:** {summarize_abstract(abstract, llm_client)}",
+            f"- **URL:** {arxiv_url}",
+            "",
+        ])
+
+    return "\n".join(summary_lines)
+
+
+def call_llm(llm_client, prompt: str) -> str:
+    """Invoke the configured chat model and return plain text content."""
+
+    response = llm_client.invoke(prompt)
+    return response.content.strip()
+
+
+def extract_year(published: str | None) -> int | None:
+    """Extract an ISO timestamp year when available."""
+
+    if not published:
+        return None
+
+    try:
+        return datetime.fromisoformat(published.replace("Z", "+00:00")).year
+    except ValueError:
+        return None
+
+
+def format_authors(authors: list[str], max_authors: int = 3) -> str:
+    """Format an author list for CLI/agent summaries."""
+
+    if not authors:
+        return "Unknown"
+    if len(authors) <= max_authors:
+        return ", ".join(authors)
+    return ", ".join(authors[:max_authors]) + ", et al."
+
+
+def generate_overall_takeaway(
+    user_query: str,
+    paper_summaries: list[dict],
+    llm_client,
+) -> str:
+    """Generate a short evidence-constrained synthesis across retrieved papers."""
+
+    prompt = f"""
+Given the following search query and paper summaries, provide an overall takeaway
+that captures the main insights and trends related to the query.
+
+User searched for: {user_query}
+Retrieved papers: {json.dumps(paper_summaries)}
+
+Write an overall takeaway in 3-5 sentences.
+Mention:
+- Common themes across the papers
+- Dominant methodologies or approaches
+- Notable gaps or future directions
+- What the user should read first
+
+Do not invent claims beyond the provided summaries.
+"""
+    return call_llm(llm_client, prompt)
+
+
+def summarize_abstract(abstract: str, llm_client) -> str:
+    """Summarize one abstract without adding unsupported information."""
+
+    prompt = f"""
+You are summarizing an academic abstract for a literature search.
+
+Abstract: {abstract}
+
+Return a concise summary in 2-3 sentences. Do not include information that is
+not present in the abstract.
+"""
+    return call_llm(llm_client, prompt)
+
+
+def split_sentences(text: str) -> list[str]:
+    """Lightweight sentence splitter for future non-LLM summary fallbacks."""
+
+    sentences = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [sentence for sentence in sentences if sentence]
+
+
+def main() -> None:
+    """Manual CLI for the retrieval/summarization tool module."""
+
+    parser = argparse.ArgumentParser(description="Search and summarize arXiv papers.")
+    parser.add_argument("query", nargs="+", help="User search query")
+    parser.add_argument("--max-results", type=int, default=5)
+    parser.add_argument("--summary", action="store_true", help="Print summarized output")
+    args = parser.parse_args()
+
+    from app.config import get_llm_client
+
+    query = " ".join(args.query)
+    raw_result = search_papers(query, max_results=args.max_results)
+    if args.summary:
+        payload = json.loads(raw_result)
+        print(summarize_claim(payload, get_llm_client()))
+    else:
+        print(raw_result)
+
+
 if __name__ == "__main__":
-    # Small manual smoke test for local development.
-    query = "machine learning for healthcare" # "hate speech detection"  # "machine learning for healthcare"
-    print(search_papers(query, max_results=5))
+    main()
