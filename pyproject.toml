@@ -19,6 +19,10 @@ dependencies = [
     "openinference-instrumentation-langchain>=0.1.66",
     "opentelemetry-sdk>=1.42.0",
     "opentelemetry-exporter-otlp>=1.42.0",
+    "langchain-community>=0.4.1",
+    "pypdf>=6.12.0",
+    "langchain-huggingface>=1.2.2",
+    "sentence-transformers>=5.5.1",
 ]
 
 [tool.pytest.ini_options]
