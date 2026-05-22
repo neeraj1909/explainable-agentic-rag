@@ -7,6 +7,7 @@ from app.rag.agentic_rag import build_agentic_rag
 from app.rag.config import TOP_K
 from app.rag.two_step_rag import build_two_step_rag
 from app.rag.compare import run_comparison
+from app.observability import setup_phoenix_tracing
 
 RagMode = Literal["two-step", "agentic", "compare"]
 RAG_MODES: tuple[str, ...] = ("two-step", "agentic", "compare")
@@ -228,6 +229,9 @@ def run_query(mode: RagMode, query: str, k: int = TOP_K) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
+    
+    setup_phoenix_tracing()
+    
     result = run_query(mode=args.mode, query=args.query, k=args.k)
     
     if args.json:
