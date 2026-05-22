@@ -9,14 +9,16 @@ from app.rag.retriever import build_attributed_retriever
 
 def format_context(docs: list[Document]) -> str:
     return "\n\n".join(
-        f"[source={doc.metadata.get('source')} "
-        f"chunk={doc.metadata.get('chunk_id')} "
-        f"page={doc.metadata.get('page')} "
-        f"retriever_score={doc.metadata.get('retriever_score')} ",
-        f"reranker_score={doc.metadata.get('reranker_score')} ",
-        f"selected_rank={doc.metadata.get('selected_rank')} ",
-        f"reason_selected={doc.metadata.get('reason_selected')}]\n",
-        f"{doc.page_content}"
+        (
+            f"[source={doc.metadata.get('source')} "
+            f"chunk={doc.metadata.get('chunk_id')} "
+            f"page={doc.metadata.get('page')} "
+            f"retriever_score={doc.metadata.get('retriever_score')} "
+            f"reranker_score={doc.metadata.get('reranker_score')} "
+            f"selected_rank={doc.metadata.get('selected_rank')} "
+            f"reason_selected={doc.metadata.get('reason_selected')}]\n"
+            f"{doc.page_content}"
+        )
         for doc in docs
     )
     
