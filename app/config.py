@@ -15,12 +15,7 @@ def get_llm_client():
     )
 
 def get_embedding_client():
-    # return OpenAIEmbeddings(
-    #     model=os.environ.get("LITELLM_EMBEDDING_MODEL"),
-    #     api_key=os.environ.get("LITELLM_API_KEY"),
-    #     base_url=os.environ.get("LITELLM_API_BASE"),
-    # )
-    
-    return HuggingFaceEmbeddings(
-        model_name = "sentence-transformers/all-MiniLM-L6-v2"
+    return OpenAIEmbeddings(
+        model=os.environ.get("OPENAI_EMBEDDING_MODEL", "text-embedding-3-large"),
+        api_key=os.environ.get("OPENAI_API_KEY"),
     )
