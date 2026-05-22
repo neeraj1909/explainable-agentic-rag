@@ -5,7 +5,7 @@ from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
 from langchain_core.documents import Document
-from langchain_core.retriever import BaseRetriever
+from langchain_core.retrievers import BaseRetriever
 from opentelemetry import trace
 from pydantic import ConfigDict
 
@@ -14,7 +14,7 @@ from app.rag.loaders import load_pdf_documents
 from app.rag.splitter import split_documents
 from app.rag.vectorstore import build_vectorstore
 from app.tools.attribution_tools import (
-    CrossEncoderReranker,
+    Reranker,
     attach_retrieval_attribution,
     set_retrieval_span_attributes,
 )
@@ -64,7 +64,17 @@ def build_attributed_retriever(k: int = TOP_K) -> AttributedVectorStoreRetriever
     vectorstore = build_vectorstore(chunks)
     
     use_reranker = os.getenv("RAG_USE_RERANKER", "false").lower() == "true"
-    reranker = CrossEncoderReranker() if use_reranker else None
+    
+    reranker = Reranker(
+        model_name=(
+            "RAG_RERANKER_EMBEDDING_MODEL", 
+            "text-embedding-3-small", 
+        )
+        if use_reranker
+        else None
+    )
+    
+    fetch_k = max(k * 4, k) if use_reranker else k 
     
     return AttributedVectorStoreRetriever(
         vectorstore=vectorstore,
