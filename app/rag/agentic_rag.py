@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_llm_client
 from app.rag.config import TOP_K
-from app.rag.retriever import build_retriever
+from app.rag.retriever import build_attributed_retriever
 
 
 class RetrieveArgs(BaseModel):
@@ -20,7 +20,7 @@ class RetrieveArgs(BaseModel):
 
 
 def make_retrieval_tool(k: int = TOP_K):
-    retriever = build_retriever(k=k)
+    retriever = build_attributed_retriever(k=k)
 
     @tool("retrieve_documents", args_schema=RetrieveArgs)
     def retrieve_documents(query: str, k: int = TOP_K) -> str:
@@ -41,6 +41,10 @@ def make_retrieval_tool(k: int = TOP_K):
                     "source": doc.metadata.get("source"),
                     "chunk_id": doc.metadata.get("chunk_id"),
                     "page": doc.metadata.get("page"),
+                    "retriever_score": doc.metadata.get("retriever_score"),
+                    "reranker_score": doc.metadata.get("reranker_score"),
+                    "selected_rank": doc.metadata.get("selected_rank"),
+                    "reason_selected": doc.metadata.get("reason_selected"),
                     "content": doc.page_content,
                 }
             )
