@@ -6,6 +6,7 @@ reason-selected explanations here.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 from dataclasses import asdict, dataclass
@@ -20,8 +21,6 @@ from openinference.semconv.trace import (
     OpenInferenceSpanKindValues,
     SpanAttributes,
 )
-from pydantic import BaseModel, ConfigDict, Field
-from sentence_transformers import CrossEncoder 
 
 
 STOPWORDS = {
@@ -170,7 +169,7 @@ def attach_retrieval_attribution(
     else:
         reranker_scores = [None] * len(docs)
         
-    candidates = list[tuple[Document, float | None, float | None, int]] = []
+    candidates: list[tuple[Document, float | None, float | None, int]] = []
     
     for retriever_rank,((doc, retriever_score), reranker_score) in enumerate(
         zip(docs_and_scores, reranker_scores, strict=False),
@@ -359,7 +358,7 @@ def _cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
     return dot_product / (norm_a * norm_b)
 
 
-def _safe_float(value: ANy) -> float | None:
+def _safe_float(value: Any) -> float | None:
     if value is None:
         return None
     
