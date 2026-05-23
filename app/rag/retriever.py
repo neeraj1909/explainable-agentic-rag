@@ -65,20 +65,20 @@ def build_attributed_retriever(k: int = TOP_K) -> AttributedVectorStoreRetriever
     
     use_reranker = os.getenv("RAG_USE_RERANKER", "false").lower() == "true"
     
-    reranker = Reranker(
-        model_name=(
-            "RAG_RERANKER_EMBEDDING_MODEL", 
-            "text-embedding-3-small", 
+    reranker = (
+        Reranker(
+            model_name=os.getenv("RAG_RERANKER_EMBEDDING_MODEL")
+            or "text-embedding-3-small"
         )
         if use_reranker
         else None
     )
     
-    fetch_k = max(k * 4, k) if use_reranker else k 
+    fetch_k = max(k * 4, k) if use_reranker else k
     
     return AttributedVectorStoreRetriever(
         vectorstore=vectorstore,
         k=k,
-        fetch_k=max(k * 4, k),
+        fetch_k=fetch_k,
         reranker=reranker,
     )
