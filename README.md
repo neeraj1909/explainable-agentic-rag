@@ -1,8 +1,8 @@
 # Explainable Agentic RAG with LangGraph
 
-A portfolio project for building a **reliable, explainable, evaluated Agentic RAG system** with LangChain, LangGraph, LangSmith, and RAGAS-style evaluation.
+A portfolio project for building a **reliable, explainable, evaluated Agentic RAG system** with LangChain, LangGraph, Phoenix/OpenTelemetry tracing, and RAGAS-style evaluation.
 
-This repository is based on the PRP plan in `~/prp-plans/explainable-agentic-rag/` and is designed to demonstrate applied Agentic AI skills: tool calling, structured outputs, retrieval attribution, graph orchestration, verifier loops, human review, tracing, and evaluation.
+This repository is based on the PRP plan in `~/prp-plans/explainable-agentic-rag/` and is designed to demonstrate applied Agentic AI skills: tool calling, structured outputs, retrieval attribution, baseline-vs-agentic comparison, graph orchestration, verifier loops, human review, tracing, and evaluation.
 
 > Position this as an **explainable evaluated Agentic RAG system**, not as a generic chatbot.
 
@@ -17,6 +17,27 @@ The project demonstrates how to:
 - Add explainability through source/chunk attribution, retrieval scores, reranker scores, and selected-evidence rationale.
 - Use LangGraph for controlled, stateful orchestration with conditional routing, retry loops, memory, checkpoints, and human-in-the-loop review.
 - Evaluate answer quality using faithfulness, context precision, context recall, factual correctness, latency, and tool-call metrics.
+
+---
+
+## Current Status
+
+Implemented so far:
+
+- Local PDF ingestion from `docs/`.
+- Chunking with stable source, page, and chunk metadata.
+- In-memory vector retrieval using LangChain embeddings.
+- Baseline **2-step RAG**: retrieve evidence, then answer from context.
+- **Agentic RAG**: exposes retrieval as a `retrieve_documents` tool and lets the model decide when and how often to retrieve.
+- Retrieval attribution metadata: source, chunk ID, page, retriever score, selected rank, reranker score, and reason-selected rationale.
+- Compare-mode CLI that runs baseline and agentic RAG side by side.
+- Phoenix/OpenTelemetry tracing for retrieval and model/tool spans.
+
+Still planned:
+
+- LangGraph-controlled verifier/retry workflow.
+- Evaluation dataset and metric report.
+- Human-in-the-loop review path.
 
 ---
 
@@ -145,13 +166,26 @@ while leaving Day-2/Day-3 modules ready for incremental implementation.
 │   │   ├── verification_tools.py
 │   │   └── attribution_tools.py
 │   ├── rag/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── agentic_rag.py
+│   │   ├── cli.py
+│   │   ├── compare.py
+│   │   ├── config.py
+│   │   ├── loaders.py
+│   │   ├── prompts.py
+│   │   ├── retriever.py
+│   │   ├── splitter.py
+│   │   ├── two_step_rag.py
+│   │   └── vectorstore.py
 │   ├── graphs/
 │   │   └── __init__.py
 │   └── evaluation/
 │       └── __init__.py
 ├── notebooks/
 ├── tests/
+│   ├── test_rag_cli.py
+│   ├── test_rag_compare.py
+│   ├── test_rag_retriever.py
 │   └── test_schemas.py
 └── docs/
 ```
@@ -170,13 +204,21 @@ uv sync
 cp .env.example .env
 ```
 
-Configure `.env` with your LiteLLM/OpenAI-compatible endpoint and tracing settings:
+Configure `.env` with your LiteLLM/OpenAI-compatible chat endpoint, embedding settings, and tracing settings:
 
 ```bash
 LITELLM_MODEL=chatgpt/gpt-5.5
-LITELLM_API_KEY=your_key
+LITELLM_API_KEY=your_litellm_or_openai_compatible_key
 LITELLM_API_BASE=https://your-litellm-or-openai-compatible-endpoint
 LITELLM_STREAMING=true
+
+OPENAI_EMBEDDING_MODEL=text-embedding-3-large
+OPENAI_API_KEY=your_openai_key_for_embeddings
+
+# Optional reranker. Disabled by default unless set to true.
+RAG_USE_RERANKER=false
+RAG_RERANKER_EMBEDDING_MODEL=text-embedding-3-small
+
 PHOENIX_PROJECT_NAME=explainable-agentic-rag
 PHOENIX_COLLECTOR_ENDPOINT=http://10.20.30.1:16006/v1/traces
 ```
@@ -206,11 +248,72 @@ uv run python3 -m app.main \
     --json
 ```
 
-### Day-2+ targets
+### Day-2 RAG CLI
 
-The Day-2 RAG, LangGraph workflow, and evaluation commands will be added as the
-corresponding modules are implemented under `app/rag/`, `app/graphs/`, and
-`app/evaluation/`.
+Run baseline two-step RAG:
+
+```bash
+uv run python -m app.rag.cli \
+    --query "What is this project about?" \
+    --mode two-step \
+    --k 5
+```
+
+Run agentic RAG only:
+
+```bash
+uv run python -m app.rag.cli \
+    --query "What are the main contributions of the SafeSpeech paper?" \
+    --mode agentic \
+    --k 5
+```
+
+Compare baseline two-step RAG with agentic RAG:
+
+```bash
+uv run python -m app.rag.cli \
+    --query "What are the main contributions of the SafeSpeech paper?" \
+    --mode compare \
+    --k 5
+```
+
+Use raw JSON output for debugging or downstream evaluation:
+
+```bash
+uv run python -m app.rag.cli \
+    --query "What are the main contributions of the SafeSpeech paper?" \
+    --mode compare \
+    --k 5 \
+    --json
+```
+
+#### Example compare-mode result
+
+For the SafeSpeech paper in `docs/s13278-024-01393-9.pdf`, compare mode shows the difference between fixed retrieval and agent-driven retrieval.
+
+- **2-Step RAG** retrieves one fixed top-k set and answers from that context.
+- **Agentic RAG** can issue multiple targeted retrieval calls, refine its search query, and cite more evidence chunks.
+
+Example agentic tool calls from a successful run:
+
+```text
+1. retrieve_documents(query='SafeSpeech paper main contributions', k=5)
+2. retrieve_documents(query='"In summary, the main focus of this paper" SafeSpeech evaluated datasets contributions', k=8)
+3. retrieve_documents(query='"2. The proposed system is evaluated" "SafeSpeech"', k=10)
+4. retrieve_documents(query='SafeSpeech contributions first system Indic languages hate content mitigation minimal annotation self explainable', k=10)
+5. retrieve_documents(query='SafeSpeech datasets Hindi Tamil Marathi Malayalam experiments human evaluation case studies', k=10)
+6. retrieve_documents(query='"We propose SafeSpeech" "3." "4." "main focus"', k=10)
+```
+
+The resulting answer identifies SafeSpeech's main contributions as:
+
+- A three-module hate-speech mitigation system that classifies hate text, identifies high-intensity hateful words, and replaces them with benign alternatives before publication.
+- Reduced reliance on extensive labeled data and domain experts through self-explainable techniques and minimal annotation.
+- A proactive moderation approach focused on context-aware rewriting before harmful content is posted.
+- Evaluation across Indic-language datasets and a mix of automatic and human evaluation.
+- The authors' claim that SafeSpeech is the first system tailored for hate-content mitigation in Indic languages.
+
+Cited chunks include `docs/s13278-024-01393-9.pdf` pages 0, 1, 6, 18, and 19.
 
 ---
 
