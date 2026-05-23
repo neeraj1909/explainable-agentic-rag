@@ -1,0 +1,126 @@
+# Evaluation Dataset
+
+Readable companion for `eval_dataset.jsonl`. The JSONL file remains machine-readable;
+this Markdown version is wrapped for easy review in a terminal or editor.
+
+## 1
+
+User input:
+What is SafeSpeech and what problem does it address?
+
+Reference:
+SafeSpeech is a cost-effective three-module pipeline for social-media text in Indic
+languages. It classifies hate speech, identifies word-level hate intensity, and
+mitigates hatefulness by replacing high-intensity hate words with benign alternatives.
+It addresses the gap between simple hate-speech detection or user bans and proactive
+hate-intensity mitigation, especially for low-resource Indic languages with limited
+annotated hate-span data.
+
+## 2
+
+User input:
+What are the main modules or stages in the SafeSpeech pipeline?
+
+Reference:
+SafeSpeech has three main modules: Hate Speech Classification, Hate Intensity
+Identification, and Hate Intensity Mitigation. The first module detects whether input
+text is hate or non-hate; the second computes word-level hate-intensity scores using
+attribution/explainability; the third masks and replaces the most hateful words to
+generate a less hateful or non-hate version of the text.
+
+## 3
+
+User input:
+What task is studied in the code-mixed hate-speech identification paper?
+
+Reference:
+The paper studies conversational hate-speech and offensive-content identification in
+code-mixed languages, mainly Hinglish. It addresses HASOC 2022 ICHCL tasks: binary
+classification of conversational tweets/comments/replies into hate/offensive versus non-
+hate/offensive, and multi-class classification of Hinglish conversational hate speech
+into standalone hate, contextual hate, and non-hate.
+
+## 4
+
+User input:
+What is DLBacktrace intended to explain?
+
+Reference:
+DLBacktrace is intended to explain decisions made by deep learning models. It traces
+relevance from the model output back to the input to show feature importance, layer
+importance, information flow, and possible biases in predictions.
+
+## 5
+
+User input:
+What is DLBacktrace described as model agnostic?
+
+Reference:
+DLBacktrace is described as model agnostic because it computes relevance directly from
+the trained model’s weights and architecture rather than relying on auxiliary models,
+baselines, external algorithms, or selected background datasets. It is designed to work
+across architectures and domains, including MLPs, CNNs, Transformer/LLM models, tabular
+data, images, and text, with support for PyTorch and TensorFlow.
+
+## 6
+
+User input:
+What does the xai_evals framework evaluate?
+
+Reference:
+xai_evals evaluates post-hoc local explanation methods for machine learning and deep
+learning models. It generates, benchmarks, and evaluates explanations from methods such
+as SHAP, LIME, Grad-CAM, Integrated Gradients, and Backtrace/DLBacktrace across tabular
+and image data, using metrics such as faithfulness, sensitivity, robustness,
+comprehensiveness, and related explanation-quality measures.
+
+## 7
+
+User input:
+What is interpretability-aware pruning used for in medicalimage analysis?
+
+Reference:
+Interpretability-aware pruning is used to compress deep neural networks for medical
+image analysis while preserving predictive performance and transparency. It uses
+attribution methods such as Layer-wise Relevance Propagation, DL-Backtrace, and
+Integrated Gradients to rank neurons or layers by importance, then prunes low-importance
+components to reduce model size, memory, and computation for healthcare deployment.
+
+## 8
+
+User input:
+What biological-neuron attributes are explored in the CNN paper?
+
+Reference:
+The CNN paper explores neuroscience-inspired properties of LGN cells and simple cells in
+the primary visual cortex. These include center-on and center-off center-surround
+receptive fields modeled with Difference of Gaussians, contrast sensitivity,
+orientation/direction selectivity, receptive-field combinations through CORF, and Push-
+Pull inhibition with opposite-contrast responses.
+
+## 9
+
+User input:
+What are Neeraj Kumar Singh's main research areas according to the CV?
+
+Reference:
+According to the CV, Neeraj Kumar Singh’s main research areas are deep learning for NLP
+and computer vision, with specialization in explainable AI and model interpretability.
+His work also includes DLBacktrace, XAI evaluation, explainable hate-speech detection
+and mitigation, medical-image model pruning/compression, bio-inspired CNNs, and
+explainable RAG.
+
+## 10
+
+User input:
+Which papers in the corpus are related to explainable AI or interpretability?
+
+Reference:
+The corpus papers most directly related to explainable AI or interpretability are
+DLBacktrace, xai_evals, and Interpretability-Aware Pruning for Efficient Medical Image
+Analysis. SafeSpeech is also related because it uses explainability and Integrated
+Gradients for word-level hate-intensity identification. The CNN paper on biological-
+neuron attributes is interpretability-adjacent because it uses neuroscience-inspired
+feature extraction to make CNN processing more biologically grounded. The code-mixed
+hate-speech identification paper is mainly a classification paper rather than an XAI
+paper.
