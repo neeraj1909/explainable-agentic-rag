@@ -134,7 +134,7 @@ def main() -> None:
         LLMContextPrecisionWithReference(),
         LLMContextRecall(),
         FactualCorrectness(),
-        ResponseRelevancy(),
+        ResponseRelevancy(strictness=1),
     ]
     
     result = evaluate(
@@ -152,7 +152,7 @@ def main() -> None:
     print("\nPer-question results:")
     print(df.to_string())
     
-    output_path = Path("/evaluation/ragas_eval_results.csv")
+    output_path = Path("evaluation/ragas_eval_results.csv")
     df.to_csv(output_path, index=False)
     
     print(f"\nSaved CSV outside codebase: {output_path}")
