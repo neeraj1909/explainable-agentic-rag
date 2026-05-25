@@ -26,6 +26,7 @@ dependencies = [
     "ragas>=0.4.3",
     "faiss-cpu>=1.14.2",
     "datasets>=4.8.5",
+    "ipython>=9.13.0",
 ]
 
 [tool.pytest.ini_options]
