@@ -1,5 +1,7 @@
 import argparse
 import json
+import sys
+from contextlib import redirect_stdout
 from collections.abc import Sequence
 from typing import Any, Literal
 
@@ -152,6 +154,43 @@ def format_agentic_rag(agentic_result: dict) -> str:
     return "\n".join(lines)
 
 
+def format_two_step_rag(result: dict) -> str:
+    lines = []
+    lines.append("2-Step RAG")
+    lines.append("-" * 80)
+    lines.append("Answer:")
+    lines.append(result.get("answer", ""))
+    lines.append("")
+    lines.append("Sources:")
+    sources = result.get("sources", [])
+    if sources:
+        for source in sources:
+            lines.append(
+                f"  - {source.get('source')} "
+                f"| chunk={source.get('chunk_id')} "
+                f"| page={source.get('page')}"
+            )
+    else:
+        lines.append("  No sources retrieved.")
+
+    return "\n".join(lines)
+
+
+def format_output(result: dict) -> str:
+    mode = result.get("mode")
+
+    if mode == "agentic_rag" or "result" in result and "messages" in result.get("result", {}):
+        return format_agentic_rag(result)
+
+    if "two_step_rag" in result and "agentic_rag" in result:
+        return format_compare_output(result)
+
+    if mode == "two_step_rag":
+        return format_two_step_rag(result)
+
+    return json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False)
+
+
 def format_compare_output(result: dict) -> str:
     lines = []
     lines.append("RAG Comparison")
@@ -230,7 +269,8 @@ def run_query(mode: RagMode, query: str, k: int = TOP_K) -> dict[str, Any]:
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     
-    setup_phoenix_tracing()
+    with redirect_stdout(sys.stderr):
+        setup_phoenix_tracing()
     
     result = run_query(mode=args.mode, query=args.query, k=args.k)
     
@@ -238,12 +278,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         print(json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False))
         return
     
-    if args.mode == "compare":
-        print(format_compare_output(_to_jsonable(result)))
-    elif args.mode == "agentic":
-        print(format_agentic_rag(_to_jsonable(result)))
-    else:
-        print(json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False))
+    print(format_output(_to_jsonable(result)))
 
 
 if __name__ == "__main__":
