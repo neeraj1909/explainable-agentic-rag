@@ -1,13 +1,17 @@
-import operator 
+import operator
+from pathlib import Path
+
 from dotenv import load_dotenv
 from langchain.tools import tool
 # from langchain.chat_models import init_chat_model
-from langchain.messages import AnyMessage, SystemMessage, ToolMessage
+from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage 
 from langgraph.graph import StateGraph, START, END
 from typing import Literal
 from typing_extensions import TypedDict, Annotated
 
 from app.config import get_llm_client
+from app.observability import setup_phoenix_tracing
+
 
 # model = init_chat_model(
 #     "claude-sonnet-4-6",
@@ -132,14 +136,64 @@ agent_builder.add_edge("tool_node", "llm_call")
 # Compile the agent
 agent = agent_builder.compile()
 
-# Show the agent
-from IPython.display import Image, display
-display(Image(agent.get_graph(xray=True).draw_mermaid_png()))
+def render_graph_for_terminal(output_dir: str = "/tmp") -> tuple[Path, Path]:
+    """Save graph artifacts and print a readable terminal representation.
 
-# Invoke
-from langchain.messages import HumanMessage
-messages = [HumanMessage(content="Add 3 and 4.")]
-messages = agent.invoke({"messages": messages})
+    Raster image previews such as `chafa graph.png` are often too distorted for
+    text-heavy diagrams. For terminals, prefer Mermaid source or LangChain's
+    ASCII renderer. The PNG is still saved for GUI viewers.
+    """
+    graph = agent.get_graph(xray=True)
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
 
-for m in messages["messages"]:
-    m.pretty_print()
+    png_path = output_path / "graph_hello_world.png"
+    mermaid_path = output_path / "graph_hello_world.mmd"
+
+    png_path.write_bytes(graph.draw_mermaid_png())
+    mermaid_path.write_text(graph.draw_mermaid(), encoding="utf-8")
+
+    print(f"Graph PNG saved to: {png_path}")
+    print(f"Graph Mermaid saved to: {mermaid_path}")
+    print(f"Open the clean image with: xdg-open {png_path}")
+
+    try:
+        terminal_graph = graph.draw_ascii()
+        ascii_note = None
+    except ImportError:
+        terminal_graph = (
+            "  START\n"
+            "    │\n"
+            "    ▼\n"
+            "  llm_call ── tool call ──▶ tool_node\n"
+            "    │                         │\n"
+            "    └──── no tool call ─▶ END │\n"
+            "                              │\n"
+            "                              └──▶ llm_call\n"
+        )
+        ascii_note = "For auto-generated ASCII graphs, install: uv add grandalf"
+
+    print("\nTerminal graph:")
+    print(terminal_graph)
+    if ascii_note:
+        print(ascii_note)
+
+    return png_path, mermaid_path
+
+
+def run_demo() -> None:
+    # Show/save the agent graph
+    render_graph_for_terminal()
+    
+    setup_phoenix_tracing()
+
+    # Invoke
+    messages = [HumanMessage(content="Add 3 and 4. Then multiply it by 3.")]
+    messages = agent.invoke({"messages": messages})
+
+    for m in messages["messages"]:
+        m.pretty_print()
+
+
+if __name__ == "__main__":
+    run_demo()
