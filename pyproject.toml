@@ -27,6 +27,7 @@ dependencies = [
     "faiss-cpu>=1.14.2",
     "datasets>=4.8.5",
     "ipython>=9.13.0",
+    "grandalf>=0.8",
 ]
 
 [tool.pytest.ini_options]
