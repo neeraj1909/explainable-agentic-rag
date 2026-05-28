@@ -336,7 +336,7 @@ def stream_rag_graph_progress(
         if "retrieve" in event:
             yield "retrieval completed"
             
-        elif "grade_relevance":
+        elif "grade_relevance" in event:
             update = event["grade_relevance"]
             if update.get("is_relevant"):
                 yield "retrieval relevance passed"
@@ -492,16 +492,16 @@ def main(argv: Sequence[str] | None = None) -> None:
     setup_phoenix_tracing()
     
     if args.stream:
-        for pregress in stream_rag_graph_progress(
+        for progress in stream_rag_graph_progress(
             question=args.query,
             k=args.k,
             thread_id="cli-stream",
         ):
             if isinstance(progress, dict) and progress.get("event") == "final answer generated":
-                final_result = progess.get("result")
+                final_result = progress.get("result")
                 continue
             
-            print(progess)
+            print(progress)
         
         if final_result is not None:
             print()
