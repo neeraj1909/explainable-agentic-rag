@@ -11,6 +11,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import START, END, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.types import interrupt, Command 
 
 from app.config import get_llm_client
 from app.rag.config import TOP_K
@@ -44,6 +45,11 @@ class RagGraphState(TypedDict):
     max_retries: NotRequired[int]
     
     final: NotRequired[dict[str, Any]]
+    
+    needs_human_review: NotRequired[bool]
+    human_review_reason: NotRequired[str]
+    human_feedback: NotRequired[str]
+    human_approved: NotRequired[bool]
     
     
 rewrite_prompt = ChatPromptTemplate.from_template(
@@ -183,6 +189,26 @@ def build_rag_graph(k: int = TOP_K):
         
         return {"final": final}
     
+    def human_review(state: RagGraphState) -> dict[str, Any]:
+        review_payload = {
+            "question": state["question"],
+            "query": state.get("query"),
+            "answer": state.get("answer"),
+            "faithfulness_score": state.get("faithfulness_score"),
+            "unsupported_claims": state.get("unsupported_claims", []),
+            "retry_count": state.get("retry_count", 0),
+            "reason": "Faithfulness below threshold or unsupported claims found.", 
+        }
+        
+        human_response = interrupt(review_payload)
+                
+        return {
+            "needs_human_review": True,
+            "human_review_reason": review_payload["reason"],
+            "human_feedback": human_response.get("feedback"),
+            "human_approved": human_response.get("approved", False), 
+        }
+    
     def route_after_classification(
         state: RagGraphState, 
     ) -> Literal["retrieve", "generate_answer"]:
@@ -203,14 +229,14 @@ def build_rag_graph(k: int = TOP_K):
     
     def route_after_verification(
         state: RagGraphState,
-    ) -> Literal["finalize", "rewrite_query"]:
+    ) -> Literal["finalize", "rewrite_query", "human_review"]:
         if state.get("verified"):
             return "finalize"
         
         if state.get("retry_count", 0) < state.get("max_retries", 2):
             return "rewrite_query"
         
-        return "finalize"
+        return "human_review"
     
     
     graph = StateGraph(RagGraphState)
@@ -222,6 +248,7 @@ def build_rag_graph(k: int = TOP_K):
     graph.add_node("generate_answer", generate_answer)
     graph.add_node("verify_claims", verify_claims)
     graph.add_node("finalize", finalize) 
+    graph.add_node("human_review", human_review) 
     
     graph.add_edge(START, "classify_query")
     graph.add_conditional_edges(
@@ -253,14 +280,37 @@ def build_rag_graph(k: int = TOP_K):
         {
             "finalize": "finalize",
             "rewrite_query": "rewrite_query",
+            "human_review": "human_review", 
         },
     )
-        
+    
+    graph.add_edge("human_review", "finalize")
     graph.add_edge("finalize", END)
     
     checkpointer = InMemorySaver()
     
     return graph.compile(checkpointer=checkpointer)
+
+
+def resume_rag_graph(
+    graph,
+    approved: bool,
+    feedback: str,
+    thread_id: str = "default",
+) -> dict[str, Any]:
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}} 
+    
+    resume_result = graph.invoke(
+        Command(
+            resume={
+                "approved": approved,
+                "feedback": feedback, 
+            }
+        ),
+        config=config, 
+    )
+    
+    return resume_result["final"]
 
 
 def run_rag_graph(question: str, k: int = TOP_K, thread_id: str = "default") -> dict[str, Any]:
@@ -276,6 +326,25 @@ def run_rag_graph(question: str, k: int = TOP_K, thread_id: str = "default") -> 
         },
         config 
     )
+    
+    if "__interrupt__" in result:
+        print(f"Human review required: {result['__interrupt__']}")
+        
+        # collect human input somehow
+        approved = True
+        feedback = "Approved after manual review."
+        
+        final_result = resume_rag_graph(
+            graph=graph,
+            approved=approved,
+            feedback=feedback,
+            thread_id=thread_id, 
+        )
+        
+        print(final_result)
+        
+    else:
+        print(result["final"])
     
     return result["final"]
 
