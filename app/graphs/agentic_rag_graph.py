@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import json
+from collections.abc import Sequence
 from typing import Any, Literal, NotRequired, TypedDict
 
 from langchain_core.documents import Document 
@@ -271,9 +273,95 @@ def run_rag_graph(question: str, k: int = TOP_K) -> dict[str, Any]:
     return result["final"]
 
 
-if __name__ == "__main__":
+def format_rag_graph_output(result: dict[str, Any]) -> str:
+    lines: list[str] = []
+
+    lines.append("RAG Graph")
+    lines.append("-" * 80)
+    lines.append("Answer:")
+    lines.append(result.get("answer") or "")
+    lines.append("")
+
+    lines.append("Verification:")
+    faithfulness_score = result.get("faithfulness_score")
+    if isinstance(faithfulness_score, float):
+        faithfulness_score = round(faithfulness_score, 3)
+    lines.append(f"  Faithfulness score: {faithfulness_score}")
+    lines.append(f"  Verified: {result.get('verified')}")
+    lines.append(f"  Retry count: {result.get('retry_count')}")
+    lines.append("")
+
+    unsupported_claims = result.get("unsupported_claims", [])
+    if unsupported_claims:
+        lines.append("Unsupported claims:")
+        for claim in unsupported_claims:
+            lines.append(f"  - {claim}")
+        lines.append("")
+
+    lines.append("Sources:")
+    sources = result.get("sources", [])
+    if sources:
+        for index, source in enumerate(sources, start=1):
+            retriever_score = source.get("retriever_score")
+            if isinstance(retriever_score, float):
+                retriever_score = round(retriever_score, 4)
+
+            reranker_score = source.get("reranker_score")
+            if isinstance(reranker_score, float):
+                reranker_score = round(reranker_score, 4)
+
+            score_parts = [f"retriever_score={retriever_score}"]
+            if reranker_score is not None:
+                score_parts.append(f"reranker_score={reranker_score}")
+
+            lines.append(
+                f"  {index}. {source.get('source')} "
+                f"| chunk={source.get('chunk_id')} "
+                f"| page={source.get('page')} "
+                f"| {', '.join(score_parts)}"
+            )
+
+            reason = source.get("reason_selected")
+            if reason:
+                lines.append(f"     Reason: {reason}")
+    else:
+        lines.append("  No sources retrieved.")
+
+    return "\n".join(lines)
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run the LangGraph RAG workflow.")
+    parser.add_argument(
+        "--query",
+        default="What are the achievements of neeraj in area of AI and ML?",
+        help="Question to answer from the indexed documents.",
+    )
+    parser.add_argument(
+        "--k",
+        type=int,
+        default=TOP_K,
+        help="Number of chunks to retrieve.",
+    )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the raw JSON result instead of human-readable output.",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
     setup_phoenix_tracing()
-    question = "What are the achievements of neeraj in area of AI and ML?"
-    result = run_rag_graph(question)
-    print(result)
-    
+    result = run_rag_graph(args.query, k=args.k)
+
+    if args.json:
+        print(json.dumps(result, indent=2, ensure_ascii=False))
+        return
+
+    print(format_rag_graph_output(result))
+
+
+if __name__ == "__main__":
+    main()
