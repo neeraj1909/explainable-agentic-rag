@@ -8,7 +8,9 @@ from typing import Any, Literal, NotRequired, TypedDict
 from langchain_core.documents import Document 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import START, END, StateGraph
+from langgraph.checkpoint.memory import InMemorySaver
 
 from app.config import get_llm_client
 from app.rag.config import TOP_K
@@ -199,7 +201,7 @@ def build_rag_graph(k: int = TOP_K):
         
         return "generate_answer"
     
-    def route_after_verfication(
+    def route_after_verification(
         state: RagGraphState,
     ) -> Literal["finalize", "rewrite_query"]:
         if state.get("verified"):
@@ -247,7 +249,7 @@ def build_rag_graph(k: int = TOP_K):
     
     graph.add_conditional_edges(
         "verify_claims",
-        route_after_verfication,
+        route_after_verification,
         {
             "finalize": "finalize",
             "rewrite_query": "rewrite_query",
@@ -256,18 +258,23 @@ def build_rag_graph(k: int = TOP_K):
         
     graph.add_edge("finalize", END)
     
-    return graph.compile()
+    checkpointer = InMemorySaver()
+    
+    return graph.compile(checkpointer=checkpointer)
 
 
-def run_rag_graph(question: str, k: int = TOP_K) -> dict[str, Any]:
+def run_rag_graph(question: str, k: int = TOP_K, thread_id: str = "default") -> dict[str, Any]:
     graph = build_rag_graph(k=k)
+    
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}} 
     
     result = graph.invoke(
         {
             "question": question,
             "retry_count": 0,
             "max_retries": 2,
-        }
+        },
+        config 
     )
     
     return result["final"]
