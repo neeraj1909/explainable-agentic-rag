@@ -313,6 +313,60 @@ def resume_rag_graph(
     return resume_result["final"]
 
 
+def stream_rag_graph_progress(
+    question: str,
+    k: int = TOP_K,
+    thread_id: str = "default",
+):
+    graph = build_rag_graph(k=k)
+    
+    config: RunnableConfig = {
+        "configurable": {
+            "thread_id": thread_id
+        }
+    } 
+    
+    initial_state = {
+        "question": question,
+        "retry_count": 0,
+        "max_retries": 2,
+    }
+    
+    for event in graph.stream(initial_state, config=config, stream_mode="updates"):
+        if "retrieve" in event:
+            yield "retrieval completed"
+            
+        elif "grade_relevance":
+            update = event["grade_relevance"]
+            if update.get("is_relevant"):
+                yield "retrieval relevance passed"
+            else:
+                yield "retrieval relevance failed"
+        
+        elif "rewrite_query" in event:
+            yield "retry triggered. query rewritten."
+            
+        elif "generate_answer" in event:
+            yield "final answer draft generated"
+            
+        elif "verify_claims" in event:
+            update = event["verify_claims"]
+            if update.get("verified"):
+                yield "verifier passed"
+            else:
+                yield "verifier failed"
+                
+        elif "human_review" in event:
+            yield "human review required"
+            
+        elif "finalize" in event:
+            yield {
+                "event": "final answer generated",
+                "result": event["finalize"].get("final"), 
+            }
+        yield event 
+
+
 def run_rag_graph(question: str, k: int = TOP_K, thread_id: str = "default") -> dict[str, Any]:
     graph = build_rag_graph(k=k)
     
@@ -424,12 +478,37 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Print the raw JSON result instead of human-readable output.",
     )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream graph progress events."
+    )
+    
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     setup_phoenix_tracing()
+    
+    if args.stream:
+        for pregress in stream_rag_graph_progress(
+            question=args.query,
+            k=args.k,
+            thread_id="cli-stream",
+        ):
+            if isinstance(progress, dict) and progress.get("event") == "final answer generated":
+                final_result = progess.get("result")
+                continue
+            
+            print(progess)
+        
+        if final_result is not None:
+            print()
+            print(format_rag_graph_output(final_result))
+            
+        return 
+    
     result = run_rag_graph(args.query, k=args.k)
 
     if args.json:
