@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from typing import Any, Literal, NotRequired, TypedDict
+from pydantic import BaseModel, Field 
 
 from langchain_core.documents import Document 
 from langchain_core.output_parsers import StrOutputParser
@@ -26,12 +27,75 @@ AgentName = Literal[
 ]
 
 
-class RouteStep(TypedDict, total=False):
+class RouteStepModel(BaseModel):
     step: int
     agent: str
     decision: str
     reason: str 
+    called_by: str | None = None 
     
+    
+class OrchestratorOutput(BaseModel):
+    task_plan: list[str] = Field(default_factory=list)
+    next_agent: AgentName
+    orchestrator_decision_reason: str
+    route_history: list[dict[str, Any]] = Field(default_factory=list)
+    
+    
+class QueryPlannerOutput(BaseModel):
+    query: str
+    retry_count: int
+    docs: list[Any] = Field(default_factory=list)
+    context: str = ""
+    answer: str = ""
+    explanation: str = ""
+    needs_verification: bool = False
+    route_history: list[dict[str, Any]] = Field(default_factory=list)
+    
+    
+class RetrieverOutput(BaseModel):
+    query: str
+    context: str
+    relevance_reason: str
+    route_history: list[dict[str, Any]] = Field(default_factory=list)
+    
+    
+class ExplainerOutput(BaseModel):
+    answer: str
+    explanation: str 
+    needs_verification: bool = True
+    route_history: list[dict[str, Any]] = Field(default_factory=list)
+    
+    
+class VerifierOutput(BaseModel):
+    faithfulness_score: float 
+    unsupported_claims: list[str] = Field(default_factory=list)
+    verified: bool
+    needs_verification: bool = False
+    verification_method: str | None = None
+    verification_verdict: str | None = None
+    route_history: list[dict[str, Any]] = Field(default_factory=list)
+    
+    
+class FinalOutput(BaseModel):
+    answer: str | None = None
+    explanation: str | None = None
+    sources: list[dict[str, Any]] = Field(default_factory=list)
+    
+    faithfulness_score: float 
+    unsupported_claims: list[str] = Field(default_factory=list)
+    verified: bool = False
+    verification_method: str | None = None
+    verification_verdict: str | None = None
+    
+    retry_count: int = 0
+    max_retries: int = 2
+    needs_human_review: bool = False 
+    human_review_reason: str | None = None 
+    
+    task_plan: list[str] = Field(default_factory=list)
+    route_history: list[dict[str, Any]] = Field(default_factory=list)
+
     
 class MultiAgentRAGState(TypedDict, total=False):
     question: str
@@ -39,7 +103,7 @@ class MultiAgentRAGState(TypedDict, total=False):
     
     task_plan: NotRequired[list[str]]
     next_agent: NotRequired[AgentName]
-    route_history: NotRequired[list[RouteStep]]
+    route_history: NotRequired[list[dict[str, Any]]]
     orchestrator_decision_reason: NotRequired[str]
     
     docs: NotRequired[list[Document]]
@@ -121,17 +185,19 @@ def _append_route(
     agent: str,
     decision: str,
     reason: str,
+    called_by: str | None = "orchestrator",
 ) -> list[RouteStep]:
     route_history = list(state.get("route_history", []))
     
-    route_history.append(
-        {
-            "step": len(route_history) + 1,
-            "agent": agent,
-            "decision": decision,
-            "reason": reason, 
-        }
+    route_step = RouteStepModel(
+        step=len(route_history) + 1,
+        agent=agent,
+        decision=decision,
+        reason=reason,
+        called_by=called_by,
     )
+    
+    route_history.append(route_step.model_dump(exclude_none=True))
     
     return route_history
 
@@ -193,17 +259,20 @@ class OrchestratorAgent:
                 "Finalize with verification failure details."
             )
             
-        return {
-            "task_plan": task_plan,
-            "next_agent": next_agent,
-            "orchestrator_decision_reason": reason,
-            "route_history": _append_route(
+        output = OrchestratorOutput(
+            task_plan=task_plan,
+            next_agent=next_agent,
+            orchestrator_decision_reason=reason,
+            route_history=_append_route(
                 state=state,
                 agent="orchestrator",
                 decision=next_agent,
                 reason=reason, 
+                called_by=None,
             ),
-        }
+        )
+        
+        return output.model_dump() 
         
 
 class QueryPlannerAgent:
@@ -244,15 +313,15 @@ class QueryPlannerAgent:
             query = current_query
             next_retry_count = retry_count
             
-        return {
-            "query": query,
-            "retry_count": next_retry_count,
-            "docs": [],
-            "context": "",
-            "answer": "",
-            "explanation": "",
-            "needs_verification": False,
-            "route_history": _append_route(
+        output = QueryPlannerOutput(
+            query=query,
+            retry_count=next_retry_count,
+            docs=[],
+            context="",
+            answer="",
+            explanation="",
+            needs_verification=False,
+            route_history=_append_route(
                 state=state,
                 agent="query_planner",
                 decision="query_ready",
@@ -262,7 +331,9 @@ class QueryPlannerAgent:
                     else "Prepared initial retrieval query."
                 ), 
             ),
-        }
+        )
+        
+        return output.model_dump()
 
 
 class RetrieverAgent:
@@ -282,19 +353,24 @@ class RetrieverAgent:
             else "No document chunks retrieved."
         )
         
-        return {
-            "query": query,
-            "docs": docs,
-            "context": format_context(docs),
-            "relevance_reason": relevance_reason,
-            "route_history": _append_route(
+        output = RetrieverOutput(
+            query=query,
+            docs=[],
+            context=format_context(docs),
+            relevance_reason=relevance_reason,
+            route_history=_append_route(
                 state=state,
                 agent="retriever_agent",
                 decision="evidence_retrieved",
                 reason=relevance_reason, 
             ),
-        }
+        )
         
+        payload = output.model_dump(exclude={"docs"})
+        payload["docs"] = docs 
+        
+        return payload
+    
 
 class ExplainerAgent:
     """
@@ -311,21 +387,23 @@ class ExplainerAgent:
             }
         )
         
-        return {
-            "answer": answer,
-            "explanation": (
+        output = ExplainerOutput(
+            answer=answer,
+            explanation=(
                 "The answer was generated by the explainer agent from retrieved "
                 "document chunks using a grounded RAG prompt."
             ),
-            "needs_verification": True,
-            "route_history": _append_route(
+            needs_verification=True,
+            route_history=_append_route(
                 state=state,
                 agent="explainer_agent",
                 decision="answer_generated",
                 reason="Generated a context-grounded draft answer.",
             ),
-        }
+        )
         
+        return output.model_dump()
+               
 
 class VerifierAgent:
     """
@@ -358,41 +436,53 @@ class VerifierAgent:
             else "Answer has unsupported claims or insufficient faithfulness."
         )
         
-        return {
-            "faithfulness_score": faithfulness_score,
-            "unsupported_claims": unsupported_claims,
-            "verified": verified,
-            "needs_verification": False,
-            "verification_method": payload.get("method"),
-            "verification_verdict": payload.get("verdict"),
-            "route_history": _append_route(
+        output = VerifierOutput(
+            faithfulness_score=faithfulness_score,
+            unsupported_claims=unsupported_claims,
+            verified=verified,
+            needs_verification=False,
+            verification_method=payload.get("method"),
+            verification_verdict=payload.get("verdict"),
+            route_history=_append_route(
                 state=state,
                 agent="verifier_agent",
                 decision="verified" if verified else "not_verified",
                 reason=reason,
             ),
-        }
+        )
+        
+        return output.model_dump() 
 
 
 def route_from_orchestrator(state: MultiAgentRAGState) -> AgentName:
     return state.get("next_agent", "finalize")
 
 
+def _doc_metadata(doc: Document | dict[str, Any]) -> dict[str, Any]:
+        if isinstance(doc, dict):
+            return doc.get("metadata", {})
+        return doc.metadata
+    
+
 def finalize(state: MultiAgentRAGState) -> dict[str, Any]:
     docs = state.get("docs", [])
+
+    sources = []
     
-    sources = [
-        {
-            "source": doc.metadata.get("source"),
-            "chunk_id": doc.metadata.get("chunk_id"),
-            "page": doc.metadata.get("page"),
-            "retriever_score": doc.metadata.get("retriever_score"),
-            "reranker_score": doc.metadata.get("reranker_score"),
-            "selected_rank": doc.metadata.get("selected_rank"),
-            "reason_selected": doc.metadata.get("reason_selected"),
-        }
-        for doc in docs
-    ]
+    for doc in docs:
+        metadata = _doc_metadata(doc)
+        
+        sources.append(
+            {
+                "source": metadata.get("source"),
+                "chunk_id": metadata.get("chunk_id"),
+                "page": metadata.get("page"),
+                "retriever_score": metadata.get("retriever_score"),
+                "reranker_score": metadata.get("reranker_score"),
+                "selected_rank": metadata.get("selected_rank"),
+                "reason_selected": metadata.get("reason_selected"),
+            }
+        )
     
     verified = state.get("verified", False)
     retry_count = state.get("retry_count", 0)
@@ -400,33 +490,33 @@ def finalize(state: MultiAgentRAGState) -> dict[str, Any]:
     
     needs_human_review = not verified and retry_count >= max_retries
     
-    final = {
-        "answer": state.get("answer"),
-        "explanation": state.get("explanation"),
-        "sources": sources,
-        "faithfulness_score": state.get("faithfulness_score"),
-        "unsupported_claims": state.get("unsupported_claims", []),
-        "verified": state.get("verified", False),
-        "verification_method": state.get("verification_method"),
-        "verification_verdict": state.get("verification_verdict"),
-        "retry_count": retry_count,
-        "max_retries": max_retries,
-        "needs_human_review": needs_human_review,
-        "human_review_reason": (
+    final_output = FinalOutput(
+        answer=state.get("answer"),
+        explanation=state.get("explanation"),
+        sources=sources,
+        faithfulness_score=state.get("faithfulness_score"),
+        unsupported_claims=state.get("unsupported_claims", []),
+        verified=state.get("verified", False),
+        verification_method=state.get("verification_method"),
+        verification_verdict=state.get("verification_verdict"),
+        retry_count=retry_count,
+        max_retries=max_retries,
+        needs_human_review=needs_human_review,
+        human_review_reason=(
             "verification failed after retry budget was exhausted."
             if needs_human_review
             else None 
         ),
-        "task_plan": state.get("task_plan", []),
-        "route_history": _append_route(
+        task_plan=state.get("task_plan", []),
+        route_history=_append_route(
             state=state,
             agent="finalize",
             decision="final_response_ready",
             reason="Final response payload assembled."
         ),
-    }
+    )
     
-    return {"final": final}
+    return {"final": final_output.model_dump()}
     
     
 def build_multi_agent_rag_graph(k: int = TOP_K):
