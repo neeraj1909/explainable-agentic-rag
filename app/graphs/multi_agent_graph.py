@@ -46,6 +46,19 @@ def build_persistent_checkpointer(
     )
 
 
+class StreamEvent(BaseModel):
+    event: str
+    agent: str | None = None
+    decision: str = None 
+    reason: str | None = None
+    step: int | None = None
+    retry_count: int | None = None
+    verified: bool | None = None
+    faithfulness_score: float | None = None
+    message: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    
+
 class RouteStepModel(BaseModel):
     step: int
     agent: str
@@ -477,6 +490,62 @@ def route_from_orchestrator(state: MultiAgentRAGState) -> AgentName:
     return state.get("next_agent", "finalize")
 
 
+def _latest_route_from_update(update: dict[str, Any]) -> dict[str, Any] | None:
+    for node_payload in update.values():
+        if not isinstance(node_payload, dict):
+            continue
+        
+        route_history = node_payload.get("route_history", [])
+        
+        if route_history:
+            return route_history[-1]
+        
+    return None 
+
+
+def _stream_event_from_update(update: dict[str, Any]) -> StreamEvent:
+    node_name = next(iter(update.keys()))
+    node_payload = update[node_name]
+    
+    if not isinstance(node_payload, dict):
+        return StreamEvent(
+            event="node_update",
+            agent=node_name,
+            message=f"{node_name} emitted an update.",
+            payload={"raw": str(node_payload)}, 
+        )
+        
+    latest_route = _latest_route_from_update(update)
+    
+    if latest_route:
+        return StreamEvent(
+            event="agent_step",
+            agent=latest_route.get("agent", node_name),
+            decision=latest_route.get("decision"),
+            reason=latest_route.get("reason"),
+            step=latest_route.get("step"),
+            retry_count=latest_route.get("retry_count"),
+            verified=latest_route.get("verified"),
+            faithfulness_score=latest_route.get("faithfulness_score"),
+            message=(
+                f"{latest_route.get('agent', node_name)} -> "
+                f"{latest_route.get('decision')}: "
+                f"{latest_route.get('reason')}"
+            ),
+            payload=node_payload,
+        )
+        
+    return StreamEvent(
+        event="node_update",
+        agent=node_name,
+        retry_count=node_payload.get("retry_count"),
+        verified=node_payload.get("verified"),
+        faithfulness_score=node_payload.get("faithfulness_score"),
+        message=f"{node_name} completed.",
+        payload=node_payload,
+    )
+
+
 def _doc_metadata(doc: Document | dict[str, Any]) -> dict[str, Any]:
         if isinstance(doc, dict):
             return doc.get("metadata", {})
@@ -601,7 +670,7 @@ def build_multi_agent_rag_graph(
     return graph.compile(checkpointer=checkpointer)
 
 
-def run_multi_agent_rag_graph(
+def stream_multi_agent_rag_graph_event(
     question: str,
     k: int = TOP_K,
     max_retries: int = 2,
@@ -619,32 +688,89 @@ def run_multi_agent_rag_graph(
         }
     }
     
-    result = graph.invoke(
-        {
-            "question": question,
-            "query": "",
-            "retry_count": 0,
-            "max_retries": max_retries,
-            "route_history": [],
-        },
-        config=config, 
-    )
+    inputs = {
+        "question": question,
+        "query": "",
+        "retry_count": 0,
+        "max_retries": max_retries,
+        "route_history": [],
+    }
     
+    yield StreamEvent(
+        event="graph_start",
+        agent="graph",
+        message="Starting multi-agent RAG graph.",
+        payload={
+            "question": question,
+            "thread_id": thread_id,
+            "max_retries": max_retries,
+        },
+    ).model_dump()
+    
+    final_result: dict[str, Any] | None = None
+    
+    for update in graph.stream(
+        inputs,
+        config=config,
+        stream_mode="updates",
+    ):
+        event = _stream_event_from_update(update)
+        
+        if "finalize" in update:
+            final_result = update["finalize"].get("final")
+            
+        yield event.model_dump()
+        
     graph.checkpointer.storage.sync()
     graph.checkpointer.writes.sync()
-    graph.checkpointer.blobs.sync() 
+    graph.checkpointer.blobs.sync()
     
-    return result["final"]
+    yield StreamEvent(
+        event="graph_end",
+        agent="graph",
+        message="Multi-agent RAG graph completed.",
+        payload={
+            "final": final_result,
+            "thread_id": thread_id,
+        },
+    ).model_dump()
+    
+
+def print_multi_agent_rag_stream(
+    question: str,
+    k: int = TOP_K,
+    max_retries: int = 2,
+    thread_id: str = "default",
+) -> dict[str, Any] | None:
+    final_result = None
+    
+    for event in stream_multi_agent_rag_graph_event(
+        question=question,
+        k=k,
+        max_retries=max_retries,
+        thread_id=thread_id,
+    ):
+        print(f"[{event['event']}] {event['message']}")
+        
+        if event["event"] == "graph_end":
+            final_result = event["payload"].get("final")
+            
+    return final_result
 
 
 if __name__ == "__main__":
     setup_phoenix_tracing()
-    result = run_multi_agent_rag_graph(
+    
+    final = print_multi_agent_rag_stream(
         question="What are the capabilities of Neeraj in AI and ML?",
         k=5,
+        thread_id="multi-agent-stream-demo",
     )
     
-    print(result["answer"])
-    print(json.dumps(result["route_history"], indent=2))
-    print(result["sources"])
+    if final:
+        print("\nFinal answer:")
+        print(final["answer"])
+        
+        print("\nSources:")
+        print(json.dumps(final["sources"], indent=2))
     
