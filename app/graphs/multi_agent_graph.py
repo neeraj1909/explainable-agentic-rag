@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import json
+from functools import partial
+from pathlib import Path
 from typing import Any, Literal, NotRequired, TypedDict
 from pydantic import BaseModel, Field 
 
 from langchain_core.documents import Document 
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate 
+from langchain_core.runnables import RunnableConfig
+from langgraph.checkpoint.memory import InMemorySaver, PersistentDict
 from langgraph.graph import StateGraph, START, END
 
 from app.config import get_llm_client
@@ -25,6 +29,21 @@ AgentName = Literal[
     "verifier_agent",
     "finalize",
 ]
+
+CHECKPOINT_DIR = Path(".langgraph_checkpoints")
+CHECKPOINT_FILE = CHECKPOINT_DIR / "multi_agent_graph.pkl"
+
+def build_persistent_checkpointer(
+    checkpoint_file: Path = CHECKPOINT_FILE,
+) -> InMemorySaver:
+    checkpoint_file.parent.mkdir(parents=True, exist_ok=True)
+    
+    return InMemorySaver(
+        factory=partial(
+            PersistentDict,
+            filename=str(checkpoint_file),
+        )
+    )
 
 
 class RouteStepModel(BaseModel):
@@ -519,7 +538,10 @@ def finalize(state: MultiAgentRAGState) -> dict[str, Any]:
     return {"final": final_output.model_dump()}
     
     
-def build_multi_agent_rag_graph(k: int = TOP_K):
+def build_multi_agent_rag_graph(
+    k: int = TOP_K,
+    checkpoint_file: Path = CHECKPOINT_FILE,
+):
     """
     Build an orchestrator-led multi-agent RAG workflow using existing project 
     components.
@@ -574,15 +596,28 @@ def build_multi_agent_rag_graph(k: int = TOP_K):
     graph.add_edge("verifier_agent", "orchestrator")
     graph.add_edge("finalize", END)
     
-    return graph.compile()
+    checkpointer = build_persistent_checkpointer(checkpoint_file)
+    
+    return graph.compile(checkpointer=checkpointer)
 
 
 def run_multi_agent_rag_graph(
     question: str,
     k: int = TOP_K,
     max_retries: int = 2,
-) -> dict[str, Any]:
-    graph = build_multi_agent_rag_graph(k=k)
+    thread_id: str = "default",
+    checkpoint_file: Path = CHECKPOINT_FILE,
+) -> dict[str, Any]: 
+    graph = build_multi_agent_rag_graph(
+        k=k,
+        checkpoint_file=checkpoint_file, 
+    )
+    
+    config: RunnableConfig = {
+        "configurable": {
+            "thread_id": thread_id, 
+        }
+    }
     
     result = graph.invoke(
         {
@@ -591,8 +626,13 @@ def run_multi_agent_rag_graph(
             "retry_count": 0,
             "max_retries": max_retries,
             "route_history": [],
-        }
+        },
+        config=config, 
     )
+    
+    graph.checkpointer.storage.sync()
+    graph.checkpointer.writes.sync()
+    graph.checkpointer.blobs.sync() 
     
     return result["final"]
 
