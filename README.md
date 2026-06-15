@@ -32,12 +32,19 @@ Implemented so far:
 - Retrieval attribution metadata: source, chunk ID, page, retriever score, selected rank, reranker score, and reason-selected rationale.
 - Compare-mode CLI that runs baseline and agentic RAG side by side.
 - Phoenix/OpenTelemetry tracing for retrieval and model/tool spans.
+- LangGraph-controlled RAG workflow with classification, retrieval, query rewriting, verifier retry loop, finalization, and in-memory checkpointing.
+- Orchestrator-led multi-agent LangGraph workflow with query planner, retriever, explainer, verifier, route history, streaming events, and persistent checkpointing.
+- Evaluation dataset with 10 curated questions and a RAGAS evaluation runner for faithfulness, context precision, context recall, factual correctness, response relevance, and CSV report generation.
+
+Partially implemented:
+
+- Human-in-the-loop review path: the single LangGraph workflow uses an interrupt and resume path, but the CLI still auto-approves the demo review instead of collecting interactive user input.
+- Evaluation reporting: the runner can generate `evaluation/ragas_eval_results.csv`, but the generated report artifact and documented analysis are not checked in yet.
 
 Still planned:
 
-- LangGraph-controlled verifier/retry workflow.
-- Evaluation dataset and metric report.
-- Human-in-the-loop review path.
+- Interactive human review UX for CLI or app usage.
+- Checked-in evaluation report, trace screenshots, failure cases, and interview notes.
 
 ---
 
@@ -338,29 +345,30 @@ Evaluation should compare:
 
 ### Day 1 — LangChain applied foundation
 
-- [ ] Build a basic LangChain agent.
-- [ ] Add at least three typed tools.
-- [ ] Add structured Pydantic output.
-- [ ] Add response/progress streaming.
-- [ ] Enable LangSmith tracing.
+- [x] Build a basic LangChain agent.
+- [x] Add at least three typed tools.
+- [x] Add structured Pydantic output.
+- [x] Add response/progress streaming.
+- [x] Enable Phoenix/OpenTelemetry tracing.
 
 ### Day 2 — RAG and evaluation
 
-- [ ] Implement baseline RAG.
-- [ ] Wrap retrieval as an agent tool.
-- [ ] Add retrieval attribution.
-- [ ] Create 10–20 evaluation questions.
-- [ ] Run faithfulness/context evaluation.
-- [ ] Add unit tests for tools, schemas, retrieval formatting, and thresholds.
+- [x] Implement baseline RAG.
+- [x] Wrap retrieval as an agent tool.
+- [x] Add retrieval attribution.
+- [x] Create 10–20 evaluation questions.
+- [x] Add RAGAS faithfulness/context evaluation runner.
+- [x] Add unit tests for schemas, retrieval attribution, CLI formatting, and compare-mode orchestration.
+- [ ] Check in evaluation report analysis and generated metric artifacts.
 
 ### Day 3–4 — LangGraph and portfolio polish
 
-- [ ] Define typed graph state.
-- [ ] Build LangGraph nodes and conditional edges.
-- [ ] Add query rewrite and verifier retry loops.
-- [ ] Add memory/checkpointing.
-- [ ] Add human-in-the-loop review.
-- [ ] Add evaluation report, traces, failure cases, and interview notes.
+- [x] Define typed graph state.
+- [x] Build LangGraph nodes and conditional edges.
+- [x] Add query rewrite and verifier retry loops.
+- [x] Add memory/checkpointing.
+- [~] Add human-in-the-loop review interrupt and resume path; replace demo auto-approval with interactive input.
+- [ ] Add trace screenshots, failure cases, and interview notes.
 
 ---
 
