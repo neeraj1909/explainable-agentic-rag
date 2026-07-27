@@ -25,6 +25,8 @@ generic chatbot experience.
 - An orchestrator-led multi-agent graph with planner, retriever, explainer,
   verifier, route history, streamed events, and file-backed demo checkpoints.
 - Phoenix/OpenTelemetry instrumentation for LangChain and retrieval spans.
+- Centralized Pydantic settings for provider credentials, timeouts, retrieval
+  defaults, corpus/index paths, feature flags, and Phoenix configuration.
 - Ten curated evaluation questions and a RAGAS runner for the two-step baseline.
 - Twenty-three local tests covering typed configuration, schemas, CLI behavior,
   comparison orchestration, retrieval configuration, and attribution.
@@ -44,6 +46,8 @@ generic chatbot experience.
 - RAGAS currently evaluates only two-step RAG. No generated metric report is
   checked in, so the repository does not yet demonstrate that one mode
   outperforms another.
+- There is no immutable run manifest tying results to corpus hashes, settings,
+  dependency lock state, and a Git commit.
 - Output shapes differ between the research assistant, RAG CLI, single graph,
   and multi-agent graph.
 - There is no HTTP API, web UI, CI workflow, or container deployment yet.
@@ -92,7 +96,8 @@ supervisor routing among all four modes.
 
 The next programme of work is deliberately evidence-first:
 
-1. Align documentation and configuration with actual behavior.
+1. Freeze a reproducible baseline with corpus hashes, configuration provenance,
+   dependency-lock state, and dataset validation.
 2. Introduce a canonical response contract and a small application-service
    boundary shared by CLI, graphs, evaluation, and future API code.
 3. Evaluate all four RAG modes, including quality, retrieval, latency, cost,
@@ -209,8 +214,8 @@ verification metadata only after it is implemented and tested.
     └── *.pdf
 ```
 
-Generated local state such as `.env`, `.venv/`, `.ruff_cache/`, and
-`.langgraph_checkpoints/` is intentionally omitted.
+Generated local state such as `.env`, `.venv/`, `.coverage`, `.ruff_cache/`,
+`.rag-index/`, and `.langgraph_checkpoints/` is intentionally omitted.
 
 ---
 
@@ -278,6 +283,19 @@ OpenAI. The current embeddings client does not reuse `LITELLM_API_BASE`.
 `RAG_INDEX_DIR` is typed now but remains reserved until persistent indexing is
 implemented. Set `PHOENIX_ENABLED=false` for offline/test runs that should not
 register a trace exporter.
+
+All values are parsed by `AppSettings` in `app/config.py`. Numeric limits, URLs,
+booleans, and chunk overlap are validated before provider work begins. Chat and
+embedding credentials are checked only when their respective clients are
+constructed, so help commands, configuration tests, and offline tooling do not
+require secrets.
+
+Validate `.env` without making provider calls:
+
+```bash
+PHOENIX_ENABLED=false uv run python -c \
+    "from app.config import get_settings; get_settings(); print('configuration valid')"
+```
 
 ### Start Phoenix locally
 
@@ -475,6 +493,12 @@ Run the local test suite:
 uv run pytest -q
 ```
 
+Run only the typed configuration tests:
+
+```bash
+uv run pytest -q tests/test_config.py
+```
+
 Ruff and pytest-cov are installed by the default development dependency group.
 Inspect formatting and lint without modifying files with:
 
@@ -494,11 +518,12 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 ### Working prototype capabilities
 
 - [x] Typed research tools, structured output, streaming, and Phoenix tracing.
+- [x] Typed, validated, portable application configuration.
 - [x] Two-step and agentic local-PDF RAG.
 - [x] Retrieval attribution and optional embedding-similarity reranking.
 - [x] Single and multi-agent LangGraph prototypes with bounded retries.
 - [x] Ten-question dataset and two-step RAGAS runner.
-- [x] Local unit tests for the existing CLI, schemas, and retrieval behavior.
+- [x] Local tests for configuration, CLI, schemas, and retrieval behavior.
 
 ### Partial capabilities
 
