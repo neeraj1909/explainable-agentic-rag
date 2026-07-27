@@ -54,7 +54,8 @@ cosine similarity. It is not a cross-encoder.
 
 ## Current component responsibilities
 
-- `app/config.py` constructs the OpenAI-compatible chat client and the separate
+- `app/config.py` owns the typed settings model, context-specific credential
+  checks, and construction of the OpenAI-compatible chat client and separate
   OpenAI embeddings client.
 - `app/observability.py` registers Phoenix/OpenTelemetry and instruments
   LangChain calls.
@@ -113,6 +114,8 @@ records model/tool spans, and the attributed retriever adds a
 evaluation runner does not currently initialize Phoenix. The portable
 development endpoint is configured through
 `PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces`.
+Tracing can be disabled without registering an exporter by setting
+`PHOENIX_ENABLED=false`.
 
 Traces can contain queries, retrieved document text, and model responses. Treat
 the trace store as sensitive data and review it before sharing.

@@ -26,8 +26,8 @@ generic chatbot experience.
   verifier, route history, streamed events, and file-backed demo checkpoints.
 - Phoenix/OpenTelemetry instrumentation for LangChain and retrieval spans.
 - Ten curated evaluation questions and a RAGAS runner for the two-step baseline.
-- Thirteen local tests covering schemas, CLI behavior, comparison orchestration,
-  retrieval configuration, and attribution.
+- Twenty-three local tests covering typed configuration, schemas, CLI behavior,
+  comparison orchestration, retrieval configuration, and attribution.
 
 ## Important current limitations
 
@@ -198,6 +198,7 @@ verification metadata only after it is implemented and tested.
 │       └── run_ragas_eval.py
 ├── notebooks/
 ├── tests/
+│   ├── test_config.py
 │   ├── test_rag_cli.py
 │   ├── test_rag_compare.py
 │   ├── test_rag_retriever.py
@@ -247,22 +248,36 @@ LITELLM_MODEL=<chat-model-name>
 LITELLM_API_KEY=<chat-api-key>
 LITELLM_API_BASE=<proxy-base-url-or-empty>
 LITELLM_STREAMING=true
+LITELLM_TIMEOUT_SECONDS=30
 
 # PDF indexing and retrieval embeddings
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
 OPENAI_API_KEY=<openai-api-key>
+OPENAI_EMBEDDING_TIMEOUT_SECONDS=30
+
+# Corpus and retrieval defaults
+RAG_DOCS_DIR=docs
+RAG_INDEX_DIR=.rag-index
+RAG_CHUNK_SIZE=800
+RAG_CHUNK_OVERLAP=120
+RAG_TOP_K=4
+RAG_FETCH_K_MULTIPLIER=4
 
 # Optional second embedding-similarity ranking pass
 RAG_USE_RERANKER=false
 RAG_RERANKER_EMBEDDING_MODEL=text-embedding-3-small
 
 # Phoenix/OpenTelemetry
+PHOENIX_ENABLED=true
 PHOENIX_PROJECT_NAME=explainable-agentic-rag
 PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
 ```
 
 `LITELLM_API_BASE` may be left empty when the chat client connects directly to
 OpenAI. The current embeddings client does not reuse `LITELLM_API_BASE`.
+`RAG_INDEX_DIR` is typed now but remains reserved until persistent indexing is
+implemented. Set `PHOENIX_ENABLED=false` for offline/test runs that should not
+register a trace exporter.
 
 ### Start Phoenix locally
 
@@ -460,14 +475,17 @@ Run the local test suite:
 uv run pytest -q
 ```
 
-Ruff is not yet declared as a project development dependency. If it is available
-in your environment, inspect the current lint state with:
+Ruff and pytest-cov are installed by the default development dependency group.
+Inspect formatting and lint without modifying files with:
 
 ```bash
+uv run ruff format --check .
 uv run ruff check .
+uv run pytest --cov=app
 ```
 
-Do not add `--fix` when you only intend to inspect lint findings.
+Do not add `--fix` when you only intend to inspect lint findings. Use
+`uv sync --no-dev` only for a runtime-only environment.
 
 ---
 

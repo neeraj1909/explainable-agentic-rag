@@ -1,22 +1,23 @@
-import os
-
 from phoenix.otel import register
 from openinference.instrumentation.langchain import LangChainInstrumentor
+
+from app.config import AppSettings, get_settings
 
 _instrumented = False
 
 
-def setup_phoenix_tracing():
+def setup_phoenix_tracing(settings: AppSettings | None = None):
     global _instrumented
     if _instrumented:
         return
 
+    resolved = settings or get_settings()
+    if not resolved.phoenix_enabled:
+        return
+
     tracer_provider = register(
-        project_name=os.getenv("PHOENIX_PROJECT_NAME", "explainable-agentic-rag"),
-        endpoint=os.getenv(
-            "PHOENIX_COLLECTOR_ENDPOINT",
-            "http://10.20.30.1:16006/v1/traces",
-        ),
+        project_name=resolved.phoenix_project_name,
+        endpoint=str(resolved.phoenix_collector_endpoint),
     )
 
     LangChainInstrumentor().instrument(tracer_provider=tracer_provider)

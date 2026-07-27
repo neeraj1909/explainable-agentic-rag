@@ -2,7 +2,6 @@ import argparse
 import json
 from typing import Any
 
-from dotenv import load_dotenv
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 
@@ -17,7 +16,6 @@ from app.tools.verification_tools import (
 
 
 def build_agent(max_results: int = 5):
-    load_dotenv()
     llm = get_llm_client()
 
     def search_papers_with_limit(query: str) -> str:
@@ -245,9 +243,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Load .env and configure Phoenix/OpenInference before constructing or
-    # running LangChain objects, so the agent/LLM/tool spans are captured.
-    load_dotenv()
+    # Configure Phoenix/OpenInference before constructing or running LangChain
+    # objects, so the agent/LLM/tool spans are captured.
     setup_phoenix_tracing()
 
     agent = build_agent(max_results=args.max_results)

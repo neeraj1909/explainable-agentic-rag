@@ -89,6 +89,7 @@ class Reranker:
         max_chars_per_doc: int = 6000,
         openai_api_key: str | None = None,
         openai_base_url: str | None = None,
+        timeout: float | None = None,
     ) -> None:
         self.max_chars_per_doc = max_chars_per_doc
 
@@ -105,6 +106,9 @@ class Reranker:
 
             if openai_base_url is not None:
                 kwargs["base_url"] = openai_base_url
+
+            if timeout is not None:
+                kwargs["timeout"] = timeout
 
             embeddings = OpenAIEmbeddings(**kwargs)
 

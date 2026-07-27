@@ -34,13 +34,15 @@ Chat and embeddings are separate in the current implementation.
 not automatically make local-PDF RAG work.
 
 Leave `LITELLM_API_BASE` empty for direct OpenAI chat access. Check the model
-name against the provider behind that endpoint.
+name against the provider behind that endpoint. Configuration errors list the
+missing variable names without printing secret values.
 
 ## Phoenix connection or trace export errors
 
 The portable local setting is:
 
 ```dotenv
+PHOENIX_ENABLED=true
 PHOENIX_PROJECT_NAME=explainable-agentic-rag
 PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
 ```
@@ -55,9 +57,8 @@ docker run --rm --name phoenix \
 ```
 
 Then open <http://localhost:6006>. If Phoenix runs on another machine or port,
-set the collector endpoint explicitly. The current code still contains a
-non-portable fallback endpoint when the variable is absent, so do not rely on
-the fallback.
+set the collector endpoint explicitly. Set `PHOENIX_ENABLED=false` when traces
+should be disabled; the portable endpoint above is the runtime default.
 
 Traces may include queries, retrieved text, and responses. Do not send private
 documents to a shared collector without an explicit data-handling decision.
@@ -146,11 +147,13 @@ Run the test suite:
 uv run pytest -q
 ```
 
-Ruff is not yet declared as a project development dependency. If it is already
-available in the environment, use a read-only check first:
+The default development dependency group includes Ruff and pytest-cov. Use
+read-only checks first:
 
 ```bash
+uv run ruff format --check .
 uv run ruff check .
+uv run pytest --cov=app
 ```
 
 Only add `--fix` when you intend to modify files. An undefined type in an

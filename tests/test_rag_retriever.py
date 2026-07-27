@@ -36,6 +36,7 @@ def test_build_attributed_retriever_constructs_reranker_with_env_model(monkeypat
     _patch_retriever_dependencies(monkeypatch)
     monkeypatch.setenv("RAG_USE_RERANKER", "true")
     monkeypatch.setenv("RAG_RERANKER_EMBEDDING_MODEL", "custom-reranker-embedding")
+    monkeypatch.setenv("OPENAI_API_KEY", "test-embedding-key")
     constructed = []
 
     class RecordingReranker:
@@ -49,6 +50,8 @@ def test_build_attributed_retriever_constructs_reranker_with_env_model(monkeypat
 
     assert result.reranker is constructed[0]
     assert constructed[0].kwargs["model_name"] == "custom-reranker-embedding"
+    assert constructed[0].kwargs["openai_api_key"] == "test-embedding-key"
+    assert constructed[0].kwargs["timeout"] == 30.0
     assert result.fetch_k == 20
 
 

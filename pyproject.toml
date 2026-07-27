@@ -1,22 +1,25 @@
 [project]
 name = "explainable-agentic-rag"
 version = "0.1.0"
-description = "Explainable Agentic RAG with LangChain, LangGraph, LangSmith, and RAGAS-style evaluation."
+description = "Explainable Agentic RAG with LangChain, LangGraph, Phoenix, and RAGAS-style evaluation."
 license = { text = "MIT" }
 requires-python = ">=3.11"
 authors = [{ name = "Neeraj Kumar Singh", email = "neeraj1909@gmail.com" }]
 
 dependencies = [
     "langchain>=0.0.300",
+    "langchain-core>=1.4.0",
+    "langgraph>=1.2.0",
     "langchain-openai>=0.0.3",
+    "langchain-text-splitters>=1.1.2",
     "openai>=1.0.0",
-    "python-dotenv>=1.0.0",
-    "langsmith>=0.2.0",
     "pydantic>=2.9",
+    "pydantic-settings>=2.14.1",
     "requests>=2.31",
-    "pytest>=8.0.0",
     "arize-phoenix-otel>=0.16.1",
     "openinference-instrumentation-langchain>=0.1.66",
+    "openinference-semantic-conventions>=0.1.29",
+    "opentelemetry-api>=1.42.0",
     "opentelemetry-sdk>=1.42.0",
     "opentelemetry-exporter-otlp>=1.42.0",
     "langchain-community>=0.4.1",
@@ -28,7 +31,21 @@ dependencies = [
     "datasets>=4.8.5",
     "ipython>=9.13.0",
     "grandalf>=0.8",
+    "typing-extensions>=4.15.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.0.0",
+    "ruff>=0.15.0",
 ]
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]

@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from langchain_core.callbacks import CallbackManagerForRetrieverRun
@@ -9,7 +8,8 @@ from langchain_core.retrievers import BaseRetriever
 from opentelemetry import trace
 from pydantic import ConfigDict
 
-from app.rag.config import DOCS_DIR, TOP_K
+from app.config import get_settings
+from app.rag.config import TOP_K
 from app.rag.loaders import load_pdf_documents
 from app.rag.splitter import split_documents
 from app.rag.vectorstore import build_vectorstore
@@ -59,22 +59,22 @@ class AttributedVectorStoreRetriever(BaseRetriever):
 
 
 def build_attributed_retriever(k: int = TOP_K) -> AttributedVectorStoreRetriever:
-    documents = load_pdf_documents(DOCS_DIR)
+    settings = get_settings()
+    documents = load_pdf_documents(settings.docs_dir)
     chunks = split_documents(documents)
     vectorstore = build_vectorstore(chunks)
 
-    use_reranker = os.getenv("RAG_USE_RERANKER", "false").lower() == "true"
-
-    reranker = (
-        Reranker(
-            model_name=os.getenv("RAG_RERANKER_EMBEDDING_MODEL")
-            or "text-embedding-3-small"
+    if settings.use_reranker:
+        settings.require_embedding_credentials()
+        reranker = Reranker(
+            model_name=settings.reranker_embedding_model,
+            openai_api_key=settings.embedding_api_key.get_secret_value(),
+            timeout=float(settings.embedding_timeout_seconds),
         )
-        if use_reranker
-        else None
-    )
+    else:
+        reranker = None
 
-    fetch_k = max(k * 4, k) if use_reranker else k
+    fetch_k = max(k * settings.fetch_k_multiplier, k) if settings.use_reranker else k
 
     return AttributedVectorStoreRetriever(
         vectorstore=vectorstore,

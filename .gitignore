@@ -44,3 +44,6 @@ dist/
 
 # Multi Agent Graph Checkpoint
 .langgraph_checkpoints/
+
+# Local RAG index artifacts
+.rag-index/

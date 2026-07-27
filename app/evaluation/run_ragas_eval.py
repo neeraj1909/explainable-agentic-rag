@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 
-from dotenv import load_dotenv
 from langchain_core.output_parsers import StrOutputParser
 from langchain_openai import ChatOpenAI
 
@@ -17,14 +15,11 @@ from ragas.metrics._context_recall import LLMContextRecall
 from ragas.metrics._factual_correctness import FactualCorrectness
 from ragas.metrics._answer_relevance import ResponseRelevancy
 
-from app.config import get_embedding_client
+from app.config import get_embedding_client, get_llm_client
 from app.rag.config import TOP_K
 from app.rag.prompts import rag_prompt
 from app.rag.retriever import build_attributed_retriever
 from app.rag.two_step_rag import format_context
-
-load_dotenv()
-
 
 # ----------------------------------------------------------------------
 # 1. Load 10-20 manually curated questions + reference answers.
@@ -54,10 +49,7 @@ def validate_eval_set() -> None:
 
 
 def build_non_streaming_chat_llm() -> ChatOpenAI:
-    return ChatOpenAI(
-        model=os.environ["LITELLM_MODEL"],
-        api_key=os.environ["LITELLM_API_KEY"],
-        base_url=os.environ.get("LITELLM_API_BASE"),
+    return get_llm_client(
         temperature=0,
         streaming=False,
     )
