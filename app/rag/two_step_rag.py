@@ -21,24 +21,24 @@ def format_context(docs: list[Document]) -> str:
         )
         for doc in docs
     )
-    
-    
+
+
 def build_two_step_rag(k: int = TOP_K):
-    retriever = build_attributed_retriever(k=k)    
+    retriever = build_attributed_retriever(k=k)
     llm = get_llm_client()
     chain = rag_prompt | llm | StrOutputParser()
-    
+
     def answer(question: str) -> dict:
         docs = retriever.invoke(question)
         context = format_context(docs)
-        
+
         response = chain.invoke(
             {
                 "question": question,
                 "context": context,
             }
         )
-        
+
         return {
             "mode": "two_step_rag",
             "answer": response,
@@ -55,5 +55,5 @@ def build_two_step_rag(k: int = TOP_K):
                 for doc in docs
             ],
         }
-        
-    return answer       
+
+    return answer

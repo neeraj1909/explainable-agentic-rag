@@ -13,7 +13,9 @@ def _patch_retriever_dependencies(monkeypatch):
     return vectorstore
 
 
-def test_build_attributed_retriever_does_not_construct_reranker_when_disabled(monkeypatch):
+def test_build_attributed_retriever_does_not_construct_reranker_when_disabled(
+    monkeypatch,
+):
     vectorstore = _patch_retriever_dependencies(monkeypatch)
     monkeypatch.setenv("RAG_USE_RERANKER", "false")
 
@@ -93,5 +95,7 @@ def test_set_retrieval_span_attributes_serializes_retrieval_metadata():
 
     attribution_tools.set_retrieval_span_attributes(span, query="project?", docs=[doc])
 
-    metadata_key = f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.0.{DocumentAttributes.DOCUMENT_METADATA}"
+    metadata_key = (
+        f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.0.{DocumentAttributes.DOCUMENT_METADATA}"
+    )
     assert '"chunk_id": "chunk-1"' in span.attributes[metadata_key]

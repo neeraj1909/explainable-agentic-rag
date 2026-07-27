@@ -4,14 +4,16 @@ from app.rag import cli
 
 
 def test_parse_args_supports_mode_and_k():
-    args = cli.parse_args([
-        "--query",
-        "When should RAG retrieve?",
-        "--mode",
-        "agentic",
-        "--k",
-        "2",
-    ])
+    args = cli.parse_args(
+        [
+            "--query",
+            "When should RAG retrieve?",
+            "--mode",
+            "agentic",
+            "--k",
+            "2",
+        ]
+    )
 
     assert args.query == "When should RAG retrieve?"
     assert args.mode == "agentic"
@@ -62,15 +64,17 @@ def test_main_prints_selected_mode_json_when_requested(monkeypatch, capsys):
 
     monkeypatch.setattr(cli, "run_query", fake_run_query)
 
-    cli.main([
-        "--query",
-        "Need evidence?",
-        "--mode",
-        "agentic",
-        "--k",
-        "5",
-        "--json",
-    ])
+    cli.main(
+        [
+            "--query",
+            "Need evidence?",
+            "--mode",
+            "agentic",
+            "--k",
+            "5",
+            "--json",
+        ]
+    )
 
     output = json.loads(capsys.readouterr().out)
     assert output == {"mode": "agentic", "query": "Need evidence?", "k": 5}

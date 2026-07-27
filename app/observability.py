@@ -1,7 +1,7 @@
 import os
 
 from phoenix.otel import register
-from openinference.instrumentation.langchain import LangChainInstrumentor 
+from openinference.instrumentation.langchain import LangChainInstrumentor
 
 _instrumented = False
 
@@ -18,6 +18,6 @@ def setup_phoenix_tracing():
             "http://10.20.30.1:16006/v1/traces",
         ),
     )
-    
+
     LangChainInstrumentor().instrument(tracer_provider=tracer_provider)
     _instrumented = True

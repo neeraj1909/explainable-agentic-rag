@@ -1,10 +1,10 @@
 import operator
 from pathlib import Path
 
-from dotenv import load_dotenv
 from langchain.tools import tool
+
 # from langchain.chat_models import init_chat_model
-from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage 
+from langchain.messages import AnyMessage, SystemMessage, ToolMessage, HumanMessage
 from langgraph.graph import StateGraph, START, END
 from typing import Literal
 from typing_extensions import TypedDict, Annotated
@@ -19,12 +19,13 @@ from app.observability import setup_phoenix_tracing
 # )
 model = get_llm_client()
 
+
 # define tools
 @tool
 def multiply(a: int, b: int) -> int:
     """
     Multiply `a` and `b`.
-    
+
     Args:
         a: First int
         b: Second int
@@ -36,7 +37,7 @@ def multiply(a: int, b: int) -> int:
 def add(a: int, b: int) -> int:
     """
     Adds `a` and `b`.
-    
+
     Args:
         a: First int
         b: Second int
@@ -48,7 +49,7 @@ def add(a: int, b: int) -> int:
 def divide(a: int, b: int) -> float:
     """
     Divide `a` and `b`.
-    
+
     Args:
         a: First int
         b: Second int
@@ -66,12 +67,12 @@ model_with_tools = model.bind_tools(tools)
 class MessagesState(TypedDict):
     messages: Annotated[list[AnyMessage], operator.add]
     llm_calls: int
-    
+
 
 # define model node
 def llm_call(state: dict):
     """LLM decides whether to call a tool or not"""
-    
+
     return {
         "messages": [
             model_with_tools.invoke(
@@ -83,20 +84,20 @@ def llm_call(state: dict):
                 + state["messages"]
             )
         ],
-        "llm_calls": state.get('llm_calls', 0) + 1
+        "llm_calls": state.get("llm_calls", 0) + 1,
     }
 
 
 # define tool node
 def tool_node(state: dict):
     """Performs the tool call"""
-    
+
     result = []
     for tool_call in state["messages"][-1].tool_calls:
         tool = tools_by_name[tool_call["name"]]
         observation = tool.invoke(tool_call["args"])
         result.append(ToolMessage(content=observation, tool_call_id=tool_call["id"]))
-    
+
     return {"messages": result}
 
 
@@ -107,11 +108,11 @@ def should_continue(state: MessagesState) -> Literal["tool_node", END]:
     """
     messages = state["messages"]
     last_message = messages[-1]
-    
+
     # If the LLM makes a tool call, then perform an action
     if last_message.tool_calls:
         return "tool_node"
-    
+
     # Otherwise, we stop (reply to the user)
     return END
 
@@ -126,15 +127,12 @@ agent_builder.add_node("tool_node", tool_node)
 
 # Add edges to connect nodes
 agent_builder.add_edge(START, "llm_call")
-agent_builder.add_conditional_edges(
-    "llm_call",
-    should_continue,
-    ["tool_node", END]
-)    
+agent_builder.add_conditional_edges("llm_call", should_continue, ["tool_node", END])
 agent_builder.add_edge("tool_node", "llm_call")
 
 # Compile the agent
 agent = agent_builder.compile()
+
 
 def render_graph_for_terminal(output_dir: str = "/tmp") -> tuple[Path, Path]:
     """Save graph artifacts and print a readable terminal representation.
@@ -184,7 +182,7 @@ def render_graph_for_terminal(output_dir: str = "/tmp") -> tuple[Path, Path]:
 def run_demo() -> None:
     # Show/save the agent graph
     render_graph_for_terminal()
-    
+
     setup_phoenix_tracing()
 
     # Invoke

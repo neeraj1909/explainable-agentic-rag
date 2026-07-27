@@ -24,37 +24,63 @@ from openinference.semconv.trace import (
 
 
 STOPWORDS = {
-    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
-    "how", "in", "is", "it", "of", "on", "or", "that", "the", "this",
-    "to", "was", "what", "when", "where", "which", "who", "why", "with",
+    "a",
+    "an",
+    "and",
+    "are",
+    "as",
+    "at",
+    "be",
+    "by",
+    "for",
+    "from",
+    "how",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "that",
+    "the",
+    "this",
+    "to",
+    "was",
+    "what",
+    "when",
+    "where",
+    "which",
+    "who",
+    "why",
+    "with",
 }
 
 
 @dataclass(frozen=True)
-class RetrievalAttribution:   
-    source: str | None 
-    chunk_id: str | None 
-    page: int | None 
-    retriever_rank: int 
+class RetrievalAttribution:
+    source: str | None
+    chunk_id: str | None
+    page: int | None
+    retriever_rank: int
     selected_rank: int
-    retriever_score: float | None 
-    reranker_score: float | None 
+    retriever_score: float | None
+    reranker_score: float | None
     reason_selected: str
-    
+
     def to_metadata(self) -> dict[str, Any]:
         return asdict(self)
-    
-    
+
+
 class Reranker:
     """
     Langchain-only embedding reranker.
     Uses OpenAI embeddings through LangChain.
-    
+
     reranker_score = cosine_similarity(query_embedding, chunk_embedding)
-    
+
     Higher score means more relevant.
     """
-    
+
     def __init__(
         self,
         embeddings: Embeddings | None = None,
@@ -65,72 +91,67 @@ class Reranker:
         openai_base_url: str | None = None,
     ) -> None:
         self.max_chars_per_doc = max_chars_per_doc
-        
+
         if embeddings is None:
             kwargs: dict[str, Any] = {
                 "model": model_name,
             }
-            
+
             if dimensions is not None:
-                kwargs['dimensions'] = dimensions
-                
+                kwargs["dimensions"] = dimensions
+
             if openai_api_key is not None:
-                kwargs['api_key'] = openai_api_key
-                
+                kwargs["api_key"] = openai_api_key
+
             if openai_base_url is not None:
-                kwargs['base_url'] = openai_base_url
+                kwargs["base_url"] = openai_base_url
 
             embeddings = OpenAIEmbeddings(**kwargs)
-            
+
         self.embeddings = embeddings
-        self.embed_query_chain = RunnableLambda(
-            self._embed_query
-        ).with_config(
+        self.embed_query_chain = RunnableLambda(self._embed_query).with_config(
             {
                 "run_name": "reranker_embed_query",
                 "tags": ["retrieval-attribution", "openai-embeddings"],
             }
         )
-        
-        self.embed_documents_chain = RunnableLambda(
-            self._embed_documents
-        ).with_config(
+
+        self.embed_documents_chain = RunnableLambda(self._embed_documents).with_config(
             {
                 "run_name": "reranker_embed_documents",
                 "tags": ["retrieval-attribution", "openai-embeddings"],
             }
         )
-        
+
     def _embed_query(self, query: str) -> list[float]:
         return self.embeddings.embed_query(query)
-    
+
     def _embed_documents(self, texts: list[str]) -> list[list[float]]:
         return self.embeddings.embed_documents(texts)
-         
+
     def score(self, query: str, docs: list[Document]) -> list[float]:
         """Return one reranker score per document."""
-        
+
         if not docs:
             return []
-        
+
         chunk_texts = [
-            _normalize_text(doc.page_content)[: self.max_chars_per_doc]
-            for doc in docs
+            _normalize_text(doc.page_content)[: self.max_chars_per_doc] for doc in docs
         ]
-        
+
         query_embedding = self.embed_query_chain.invoke(query)
         doc_embeddings = self.embed_documents_chain.invoke(chunk_texts)
-        
+
         scores = [
             _cosine_similarity(query_embedding, doc_embedding)
             for doc_embedding in doc_embeddings
-        ]    
-        
+        ]
+
         if len(scores) != len(docs):
             raise ValueError(
                 f"Reranker returned {len(scores)} scores for {len(docs)} docs."
             )
-            
+
         return scores
 
 
@@ -143,10 +164,10 @@ def attach_retrieval_attribution(
 ) -> list[Document]:
     """
     Attach attribution metadata to retrieved chunks.
-    
+
     Input should usually come from:
         vectorstore.similarity_search_with_score(query, k=fetch_k)
-        
+
     Adds these metadata fields:
         retriever_score
         reranker_score
@@ -155,23 +176,22 @@ def attach_retrieval_attribution(
         reason_selected
         retrieval_attribution
     """
-    
+
     if not docs_and_scores:
         return []
-    
+
     docs = [doc for doc, _ in docs_and_scores]
-    
+
     if reranker is not None and docs:
         reranker_scores = [
-            _safe_float(score) 
-            for score in reranker.score(query=query, docs=docs)
+            _safe_float(score) for score in reranker.score(query=query, docs=docs)
         ]
     else:
         reranker_scores = [None] * len(docs)
-        
+
     candidates: list[tuple[Document, float | None, float | None, int]] = []
-    
-    for retriever_rank,((doc, retriever_score), reranker_score) in enumerate(
+
+    for retriever_rank, ((doc, retriever_score), reranker_score) in enumerate(
         zip(docs_and_scores, reranker_scores, strict=False),
         start=1,
     ):
@@ -183,14 +203,14 @@ def attach_retrieval_attribution(
                 retriever_rank,
             )
         )
-        
+
     candidates = _sort_candidates(candidates, use_reranker=reranker is not None)
-    
+
     attributed_docs: list[Document] = []
-    
+
     for selected_rank, candidate in enumerate(candidates[:k], start=1):
         doc, retriever_score, reranker_score, retriever_rank = candidate
-        
+
         attribution = RetrievalAttribution(
             source=_metadata_str(doc, "source"),
             chunk_id=_metadata_str(doc, "chunk_id") or doc.id,
@@ -208,7 +228,7 @@ def attach_retrieval_attribution(
                 reranker_score=reranker_score,
             ),
         )
-        
+
         metadata = dict(doc.metadata)
         metadata.update(
             {
@@ -220,7 +240,7 @@ def attach_retrieval_attribution(
                 "retrieval_attribution": attribution.to_metadata(),
             }
         )
-        
+
         attributed_docs.append(
             Document(
                 id=doc.id,
@@ -228,7 +248,7 @@ def attach_retrieval_attribution(
                 metadata=metadata,
             )
         )
-        
+
     return attributed_docs
 
 
@@ -241,7 +261,7 @@ def build_reason_selected(
     retriever_score: float | None,
     reranker_score: float | None,
 ) -> str:
-    
+
     if reranker_score is not None:
         reason = (
             f"Initially retrieved at rank #{retriever_rank}, then selected at "
@@ -252,34 +272,36 @@ def build_reason_selected(
             f"Selected at rank #{selected_rank} from initial vector retrieval; "
             f"no reranker configured"
         )
-        
+
     score_parts = []
-    
+
     if retriever_score is not None:
         score_parts.append(f"retriever_score={retriever_score:.4f}")
-    
+
     if reranker_score is not None:
-        score_parts.append(f"reranker_score={reranker_score:.4f}") 
-        
+        score_parts.append(f"reranker_score={reranker_score:.4f}")
+
     if score_parts:
         reason += " (" + ", ".join(score_parts) + ")"
-        
+
     overlaps = _overlap_terms(query, doc.page_content)
-    
+
     if overlaps:
         reason += f". Query terms present in chunk: {', '.join(overlaps)}."
     else:
-        reason += ". Selected by embedding similarity; no exact query-term overlap detected."
-        
+        reason += (
+            ". Selected by embedding similarity; no exact query-term overlap detected."
+        )
+
     return reason
 
 
 def document_attribution_payload(doc: Document) -> dict[str, Any]:
     attribution = doc.metadata.get("retrieval_attribution")
-    
+
     if isinstance(attribution, dict):
         return attribution
-    
+
     return {
         "source": doc.metadata.get("source"),
         "chunk_id": doc.metadata.get("chunk_id") or doc.id,
@@ -290,18 +312,18 @@ def document_attribution_payload(doc: Document) -> dict[str, Any]:
         "reranker_score": doc.metadata.get("reranker_score"),
         "reason_selected": doc.metadata.get("reason_selected"),
     }
-    
-    
+
+
 def document_attributions(docs: list[Document]) -> list[dict[str, Any]]:
     return [document_attribution_payload(doc) for doc in docs]
 
 
 def format_attributed_context(docs: list[Document]) -> str:
     blocks = []
-    
+
     for doc in docs:
         attribution = document_attribution_payload(doc)
-        
+
         blocks.append(
             "["
             f"source={attribution.get('source')} "
@@ -315,7 +337,7 @@ def format_attributed_context(docs: list[Document]) -> str:
             "]\n"
             f"{doc.page_content}"
         )
-        
+
     return "\n\n".join(blocks)
 
 
@@ -324,7 +346,7 @@ def _sort_candidates(
     *,
     use_reranker: bool,
 ) -> list[tuple[Document, float | None, float | None, int]]:
-    
+
     if use_reranker:
         return sorted(
             candidates,
@@ -334,42 +356,42 @@ def _sort_candidates(
             ),
             reverse=True,
         )
-        
+
     return sorted(
         candidates,
         key=lambda item: item[1] if item[1] is not None else float("-inf"),
         reverse=True,
     )
-    
-    
+
+
 def _cosine_similarity(vector_a: list[float], vector_b: list[float]) -> float:
     if len(vector_a) != len(vector_b):
         raise ValueError(
             f"Embedding dimensions differ: {len(vector_a)} != {len(vector_b)}"
         )
-        
-    dot_product = sum( a * b for a, b in zip(vector_a, vector_b, strict=False))
+
+    dot_product = sum(a * b for a, b in zip(vector_a, vector_b, strict=False))
     norm_a = math.sqrt(sum(a * a for a in vector_a))
     norm_b = math.sqrt(sum(b * b for b in vector_b))
-    
+
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
-    
+
     return dot_product / (norm_a * norm_b)
 
 
 def _safe_float(value: Any) -> float | None:
     if value is None:
         return None
-    
+
     try:
         number = float(value)
     except (TypeError, ValueError):
         return None
-    
+
     if math.isnan(number) or math.isinf(number):
         return None
-    
+
     return number
 
 
@@ -385,67 +407,71 @@ def _query_terms(query: str) -> list[str]:
 def _overlap_terms(query: str, text: str, limit: int = 8) -> list[str]:
     text_lower = text.lower()
     overlaps: list[str] = []
-    
+
     for term in _query_terms(query):
         if term in text_lower and term not in overlaps:
             overlaps.append(term)
-            
+
         if len(overlaps) >= limit:
             break
-        
+
     return overlaps
 
 
 def _metadata_str(doc: Document, key: str) -> str | None:
     value = doc.metadata.get(key)
-    
+
     if value is None:
         return None
-    
+
     return str(value)
 
 
 def _metadata_int(doc: Document, key: str) -> int | None:
     value = doc.metadata.get(key)
-    
+
     if value is None:
         return None
-    
+
     try:
         return int(value)
     except (TypeError, ValueError):
         return None
-    
 
-def set_retrieval_span_attributes(span: Any, *, query: str, docs: list[Document]) -> None:
+
+def set_retrieval_span_attributes(
+    span: Any, *, query: str, docs: list[Document]
+) -> None:
     span.set_attribute(
         SpanAttributes.OPENINFERENCE_SPAN_KIND,
         OpenInferenceSpanKindValues.RETRIEVER.value,
     )
     span.set_attribute(SpanAttributes.INPUT_VALUE, query)
-    
+
     for index, doc in enumerate(docs):
         attribution = doc.metadata.get("retrieval_attribution", {})
-        document_score = attribution.get("reranker_score") or attribution.get("retriever_score")
-        
+        document_score = attribution.get("reranker_score") or attribution.get(
+            "retriever_score"
+        )
+
         prefix = f"{SpanAttributes.RETRIEVAL_DOCUMENTS}.{index}"
-        
+
         span.set_attribute(
             f"{prefix}.{DocumentAttributes.DOCUMENT_ID}",
             str(attribution.get("chunk_id") or doc.metadata.get("chunk_id")),
         )
-        
+
         if document_score is not None:
             span.set_attribute(
                 f"{prefix}.{DocumentAttributes.DOCUMENT_SCORE}",
                 float(document_score),
             )
-            
+
         span.set_attribute(
             f"{prefix}.{DocumentAttributes.DOCUMENT_CONTENT}",
             doc.page_content[:4000],
         )
-        
+
         span.set_attribute(
             f"{prefix}.{DocumentAttributes.DOCUMENT_METADATA}",
             json.dumps(attribution, ensure_ascii=False, default=str),

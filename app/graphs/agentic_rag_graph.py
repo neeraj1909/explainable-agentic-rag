@@ -5,13 +5,13 @@ import json
 from collections.abc import Sequence
 from typing import Any, Literal, NotRequired, TypedDict
 
-from langchain_core.documents import Document 
+from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph import START, END, StateGraph
 from langgraph.checkpoint.memory import InMemorySaver
-from langgraph.types import interrupt, Command 
+from langgraph.types import interrupt, Command
 
 from app.config import get_llm_client
 from app.rag.config import TOP_K
@@ -25,33 +25,33 @@ from app.observability import setup_phoenix_tracing
 class RagGraphState(TypedDict):
     question: str
     query: NotRequired[str]
-    
+
     query_type: NotRequired[str]
     needs_retrieval: NotRequired[bool]
-    
+
     docs: NotRequired[list[Document]]
     context: NotRequired[str]
-    
+
     is_relevant: NotRequired[bool]
     relevance_reason: NotRequired[str]
-    
+
     answer: NotRequired[str]
-    
+
     faithfulness_score: NotRequired[float]
     unsupported_claims: NotRequired[list[str]]
     verified: NotRequired[bool]
-    
+
     retry_count: NotRequired[int]
     max_retries: NotRequired[int]
-    
+
     final: NotRequired[dict[str, Any]]
-    
+
     needs_human_review: NotRequired[bool]
     human_review_reason: NotRequired[str]
     human_feedback: NotRequired[str]
     human_approved: NotRequired[bool]
-    
-    
+
+
 rewrite_prompt = ChatPromptTemplate.from_template(
     """
     Rewrite the user question into a better retrieval query.
@@ -69,19 +69,20 @@ rewrite_prompt = ChatPromptTemplate.from_template(
     """
 )
 
+
 def build_rag_graph(k: int = TOP_K):
     retriever = build_attributed_retriever(k=k)
     llm = get_llm_client()
-    
+
     answer_chain = rag_prompt | llm | StrOutputParser()
     rewrite_chain = rewrite_prompt | llm | StrOutputParser()
-    
+
     def classify_query(state: RagGraphState) -> dict[str, Any]:
         question = state["question"]
         lowered = question.lower()
-        
+
         small_talk = lowered.strip() in {"hi", "hello", "hey", "thanks"}
-        
+
         return {
             "query": question,
             "query_type": "small_talk" if small_talk else "document_question",
@@ -89,32 +90,32 @@ def build_rag_graph(k: int = TOP_K):
             "retry_count": state.get("retry_count", 0),
             "max_retries": state.get("max_retries", 2),
         }
-        
+
     def retrieve(state: RagGraphState) -> dict[str, Any]:
         query = state.get("query", state["question"])
-        
+
         docs = retriever.invoke(query)
         context = format_context(docs)
-        
+
         return {
             "docs": docs,
             "context": context,
         }
-        
+
     def grade_relevance(state: RagGraphState) -> dict[str, Any]:
         docs = state.get("docs", [])
-        
+
         if not docs:
             return {
                 "is_relevant": False,
                 "relevance_reason": "No documents retrieved.",
             }
-            
+
         return {
             "is_relevant": True,
-            "relevance_reason": f"Retrieved {len(docs)} documents."
+            "relevance_reason": f"Retrieved {len(docs)} documents.",
         }
-        
+
     def rewrite_query(state: RagGraphState) -> dict[str, Any]:
         rewritten = rewrite_chain.invoke(
             {
@@ -123,49 +124,47 @@ def build_rag_graph(k: int = TOP_K):
                 "reason": state.get("relevance_reason", "Weak retrieval."),
             }
         )
-        
+
         return {
             "query": rewritten.strip(),
             "retry_count": state.get("retry_count", 0) + 1,
         }
-        
+
     def generate_answer(state: RagGraphState) -> dict[str, Any]:
         if not state.get("needs_retrieval", True):
-            return {
-                "answer": "Please ask a document-grounded question."
-            }
-            
+            return {"answer": "Please ask a document-grounded question."}
+
         answer = answer_chain.invoke(
             {
                 "question": state["question"],
                 "context": state.get("context", ""),
             }
         )
-        
+
         return {"answer": answer}
-    
+
     def verify_claims(state: RagGraphState) -> dict[str, Any]:
         raw_result = calculate_faithfulness_stub(
             answer=state.get("answer", ""),
             evidence=state.get("context", ""),
         )
-        
+
         result = json.loads(raw_result)
-        
+
         faithfulness_score = result.get("faithfulness_score", 0.0)
         unsupported_claims = result.get("unsupported_claims", [])
-        
+
         verified = faithfulness_score >= 0.35 and not unsupported_claims
-        
+
         return {
             "faithfulness_score": faithfulness_score,
             "unsupported_claims": unsupported_claims,
             "verified": verified,
         }
-        
+
     def finalize(state: RagGraphState) -> dict[str, Any]:
         docs = state.get("docs", [])
-        
+
         sources = [
             {
                 "source": doc.metadata.get("source"),
@@ -175,9 +174,9 @@ def build_rag_graph(k: int = TOP_K):
                 "reranker_score": doc.metadata.get("reranker_score"),
                 "reason_selected": doc.metadata.get("reason_selected"),
             }
-            for doc in docs 
+            for doc in docs
         ]
-        
+
         final = {
             "answer": state.get("answer"),
             "sources": sources,
@@ -186,9 +185,9 @@ def build_rag_graph(k: int = TOP_K):
             "verified": state.get("verified", False),
             "retry_count": state.get("retry_count", 0),
         }
-        
+
         return {"final": final}
-    
+
     def human_review(state: RagGraphState) -> dict[str, Any]:
         review_payload = {
             "question": state["question"],
@@ -197,59 +196,58 @@ def build_rag_graph(k: int = TOP_K):
             "faithfulness_score": state.get("faithfulness_score"),
             "unsupported_claims": state.get("unsupported_claims", []),
             "retry_count": state.get("retry_count", 0),
-            "reason": "Faithfulness below threshold or unsupported claims found.", 
+            "reason": "Faithfulness below threshold or unsupported claims found.",
         }
-        
+
         human_response = interrupt(review_payload)
-                
+
         return {
             "needs_human_review": True,
             "human_review_reason": review_payload["reason"],
             "human_feedback": human_response.get("feedback"),
-            "human_approved": human_response.get("approved", False), 
+            "human_approved": human_response.get("approved", False),
         }
-    
+
     def route_after_classification(
-        state: RagGraphState, 
+        state: RagGraphState,
     ) -> Literal["retrieve", "generate_answer"]:
         if state.get("needs_retrieval", True):
             return "retrieve"
         return "generate_answer"
-    
+
     def route_after_relevance(
         state: RagGraphState,
     ) -> Literal["generate_answer", "rewrite_query"]:
         if state.get("is_relevant"):
             return "generate_answer"
-        
+
         if state.get("retry_count", 0) < state.get("max_retries", 2):
             return "rewrite_query"
-        
+
         return "generate_answer"
-    
+
     def route_after_verification(
         state: RagGraphState,
     ) -> Literal["finalize", "rewrite_query", "human_review"]:
         if state.get("verified"):
             return "finalize"
-        
+
         if state.get("retry_count", 0) < state.get("max_retries", 2):
             return "rewrite_query"
-        
+
         return "human_review"
-    
-    
+
     graph = StateGraph(RagGraphState)
-    
+
     graph.add_node("classify_query", classify_query)
     graph.add_node("retrieve", retrieve)
     graph.add_node("grade_relevance", grade_relevance)
     graph.add_node("rewrite_query", rewrite_query)
     graph.add_node("generate_answer", generate_answer)
     graph.add_node("verify_claims", verify_claims)
-    graph.add_node("finalize", finalize) 
-    graph.add_node("human_review", human_review) 
-    
+    graph.add_node("finalize", finalize)
+    graph.add_node("human_review", human_review)
+
     graph.add_edge(START, "classify_query")
     graph.add_conditional_edges(
         "classify_query",
@@ -259,9 +257,9 @@ def build_rag_graph(k: int = TOP_K):
             "generate_answer": "generate_answer",
         },
     )
-    
+
     graph.add_edge("retrieve", "grade_relevance")
-    
+
     graph.add_conditional_edges(
         "grade_relevance",
         route_after_relevance,
@@ -270,25 +268,25 @@ def build_rag_graph(k: int = TOP_K):
             "rewrite_query": "rewrite_query",
         },
     )
-    
+
     graph.add_edge("rewrite_query", "retrieve")
     graph.add_edge("generate_answer", "verify_claims")
-    
+
     graph.add_conditional_edges(
         "verify_claims",
         route_after_verification,
         {
             "finalize": "finalize",
             "rewrite_query": "rewrite_query",
-            "human_review": "human_review", 
+            "human_review": "human_review",
         },
     )
-    
+
     graph.add_edge("human_review", "finalize")
     graph.add_edge("finalize", END)
-    
+
     checkpointer = InMemorySaver()
-    
+
     return graph.compile(checkpointer=checkpointer)
 
 
@@ -298,18 +296,18 @@ def resume_rag_graph(
     feedback: str,
     thread_id: str = "default",
 ) -> dict[str, Any]:
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}} 
-    
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
     resume_result = graph.invoke(
         Command(
             resume={
                 "approved": approved,
-                "feedback": feedback, 
+                "feedback": feedback,
             }
         ),
-        config=config, 
+        config=config,
     )
-    
+
     return resume_result["final"]
 
 
@@ -319,87 +317,85 @@ def stream_rag_graph_progress(
     thread_id: str = "default",
 ):
     graph = build_rag_graph(k=k)
-    
-    config: RunnableConfig = {
-        "configurable": {
-            "thread_id": thread_id
-        }
-    } 
-    
+
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
     initial_state = {
         "question": question,
         "retry_count": 0,
         "max_retries": 2,
     }
-    
+
     for event in graph.stream(initial_state, config=config, stream_mode="updates"):
         if "retrieve" in event:
             yield "retrieval completed"
-            
+
         elif "grade_relevance" in event:
             update = event["grade_relevance"]
             if update.get("is_relevant"):
                 yield "retrieval relevance passed"
             else:
                 yield "retrieval relevance failed"
-        
+
         elif "rewrite_query" in event:
             yield "retry triggered. query rewritten."
-            
+
         elif "generate_answer" in event:
             yield "final answer draft generated"
-            
+
         elif "verify_claims" in event:
             update = event["verify_claims"]
             if update.get("verified"):
                 yield "verifier passed"
             else:
                 yield "verifier failed"
-                
+
         elif "human_review" in event:
             yield "human review required"
-            
+
         elif "finalize" in event:
             yield {
                 "event": "final answer generated",
-                "result": event["finalize"].get("final"), 
+                "result": event["finalize"].get("final"),
             }
-        yield event 
+        yield event
 
 
-def run_rag_graph(question: str, k: int = TOP_K, thread_id: str = "default") -> dict[str, Any]:
+def run_rag_graph(
+    question: str, k: int = TOP_K, thread_id: str = "default"
+) -> dict[str, Any]:
     graph = build_rag_graph(k=k)
-    
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}} 
-    
+
+    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
+
     result = graph.invoke(
         {
             "question": question,
             "retry_count": 0,
             "max_retries": 2,
         },
-        config 
+        config,
     )
-    
+
     if "__interrupt__" in result:
         print(f"Human review required: {result['__interrupt__']}")
-        
+
         # collect human input somehow
         approved = True
         feedback = "Approved after manual review."
-        
+
         final_result = resume_rag_graph(
             graph=graph,
             approved=approved,
             feedback=feedback,
-            thread_id=thread_id, 
+            thread_id=thread_id,
         )
-        
+
         print(final_result)
-        
+
     else:
         print(result["final"])
-    
+
     return result["final"]
 
 
@@ -479,36 +475,37 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Print the raw JSON result instead of human-readable output.",
     )
     parser.add_argument(
-        "--stream",
-        action="store_true",
-        help="Stream graph progress events."
+        "--stream", action="store_true", help="Stream graph progress events."
     )
-    
+
     return parser.parse_args(argv)
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     setup_phoenix_tracing()
-    
+
     if args.stream:
         for progress in stream_rag_graph_progress(
             question=args.query,
             k=args.k,
             thread_id="cli-stream",
         ):
-            if isinstance(progress, dict) and progress.get("event") == "final answer generated":
+            if (
+                isinstance(progress, dict)
+                and progress.get("event") == "final answer generated"
+            ):
                 final_result = progress.get("result")
                 continue
-            
+
             print(progress)
-        
+
         if final_result is not None:
             print()
             print(format_rag_graph_output(final_result))
-            
-        return 
-    
+
+        return
+
     result = run_rag_graph(args.query, k=args.k)
 
     if args.json:

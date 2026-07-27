@@ -12,15 +12,15 @@ def test_valid_agent_response():
             SourceUsed(
                 title="Example Paper",
                 url="https://arxiv.org/abs/1234.5678",
-                reason_used="Discusses reranking and retrieval quality."
+                reason_used="Discusses reranking and retrieval quality.",
             )
         ],
         unsupported_claims=[],
         next_action=NextAction.no_follow_up_needed,
     )
-    
+
     assert response.confidence == 0.82
-    
+
 
 def test_confidence_must_be_between_zero_and_one():
     with pytest.raises(ValidationError):

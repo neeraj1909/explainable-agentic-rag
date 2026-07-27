@@ -1,12 +1,11 @@
 import operator
-from typing import Literal
 from typing_extensions import TypedDict, Annotated
 
 from langchain_core.messages import AnyMessage
 
 
 class GraphState(TypedDict):
-    messages: Annotated[list[AnyMessage], operator.add] 
+    messages: Annotated[list[AnyMessage], operator.add]
     query: str
     retrieved_docs: list[str]
     retrieval_scores: list[float]
@@ -14,4 +13,3 @@ class GraphState(TypedDict):
     faithfulness_score: float
     unsupported_claims: list[str]
     route_decision: str
-    

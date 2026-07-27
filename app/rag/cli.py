@@ -19,11 +19,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run baseline two-step RAG, agentic RAG, or compare both."
     )
-    parser.add_argument(
-        "--query", 
-        required=True, 
-        help="User question to answer"
-    )
+    parser.add_argument("--query", required=True, help="User question to answer")
     parser.add_argument(
         "--mode",
         choices=RAG_MODES,
@@ -40,9 +36,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--json",
         action="store_true",
         help="Print raw JSON/LangChain trace output.",
-        
     )
-    
+
     return parser.parse_args(argv)
 
 
@@ -75,70 +70,70 @@ def extract_final_ai_answer(message: list[dict]) -> str:
 
 def extract_tool_calls(messages: list[dict]):
     calls = []
-    
+
     for message in messages:
         for tool_call in message.get("tool_calls", []) or []:
-            calls.append({
-                "name": tool_call.get("name"),
-                "args": tool_call.get("args", {}),
-            })
-            
+            calls.append(
+                {
+                    "name": tool_call.get("name"),
+                    "args": tool_call.get("args", {}),
+                }
+            )
+
     return calls
 
 
 def extract_retrieved_sources(messages: list[dict]) -> list[dict]:
     sources = []
     seen = set()
-    
+
     for message in messages:
         if message.get("type") != "tool":
             continue
-        
+
         try:
             payload = json.loads(message.get("content", "{}"))
         except json.JSONDecodeError:
             continue
-        
+
         for item in payload.get("results", []):
             source = {
                 "source": item.get("source"),
                 "chunk_id": item.get("chunk_id"),
                 "page": item.get("page"),
             }
-            
+
             key = (source["source"], source["chunk_id"], source["page"])
             if key not in seen:
                 seen.add(key)
                 sources.append(source)
-                
+
     return sources
 
 
 def format_agentic_rag(agentic_result: dict) -> str:
     payload = agentic_result.get("result", agentic_result)
     messages = payload.get("messages", [])
-    
+
     answer = extract_final_ai_answer(messages)
     tool_calls = extract_tool_calls(messages)
     sources = extract_retrieved_sources(messages)
-    
+
     lines = []
     lines.append("Agentic RAG")
     lines.append("-" * 80)
     lines.append("Answer:")
     lines.append(answer)
     lines.append("")
-    
+
     lines.append("Tool calls:")
     if tool_calls:
         for i, call in enumerate(tool_calls, start=1):
-            args = ", ".join(
-                f"{k}={v!r}" for k, v in call.get("args", {}).items()
-            )
+            args = ", ".join(f"{k}={v!r}" for k, v in call.get("args", {}).items())
             lines.append(f"  {i}. {call.get('name')}({args})")
     else:
         lines.append("  No tools called.")
-        
+
     lines.append("")
     lines.append("Retrieved sources:")
     if sources:
@@ -150,7 +145,7 @@ def format_agentic_rag(agentic_result: dict) -> str:
             )
     else:
         lines.append("  No sources retrieved.")
-        
+
     return "\n".join(lines)
 
 
@@ -179,7 +174,11 @@ def format_two_step_rag(result: dict) -> str:
 def format_output(result: dict) -> str:
     mode = result.get("mode")
 
-    if mode == "agentic_rag" or "result" in result and "messages" in result.get("result", {}):
+    if (
+        mode == "agentic_rag"
+        or "result" in result
+        and "messages" in result.get("result", {})
+    ):
         return format_agentic_rag(result)
 
     if "two_step_rag" in result and "agentic_rag" in result:
@@ -197,10 +196,10 @@ def format_compare_output(result: dict) -> str:
     lines.append("=" * 80)
     lines.append(f"Query: {result['query']}")
     lines.append("")
-    
+
     two_step = result["two_step_rag"]
     agentic = result["agentic_rag"]
-    
+
     lines.append("2-Step RAG")
     lines.append("-" * 80)
     lines.append(f"Latency: {two_step['latency_seconds']}s")
@@ -214,10 +213,10 @@ def format_compare_output(result: dict) -> str:
             f"| chunk={source['chunk_id']} "
             f"| page={source['page']}"
         )
-    
+
     lines.append("")
     lines.append(format_agentic_rag(agentic))
-    
+
     return "\n".join(lines)
 
 
@@ -256,11 +255,11 @@ def run_query(mode: RagMode, query: str, k: int = TOP_K) -> dict[str, Any]:
 
     if mode == "compare":
         # return {
-        #     "question": query,  
+        #     "question": query,
         #     "two_step_rag": run_two_step(query=query, k=k),
         #     "agentic_rag": run_agentic(query=query, k=k),
         # }
-        
+
         return run_comparison(query=query, k=k)
 
     raise ValueError(f"Unsupported RAG mode: {mode}")
@@ -268,16 +267,16 @@ def run_query(mode: RagMode, query: str, k: int = TOP_K) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
-    
+
     with redirect_stdout(sys.stderr):
         setup_phoenix_tracing()
-    
+
     result = run_query(mode=args.mode, query=args.query, k=args.k)
-    
+
     if args.json:
         print(json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False))
         return
-    
+
     print(format_output(_to_jsonable(result)))
 
 

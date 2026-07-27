@@ -195,7 +195,7 @@ def _parse_arxiv_search_html(html: str, max_results: int) -> list[dict]:
         authors = [
             _clean_html(author)
             for author in re.findall(
-                r'<a [^>]*>(.*?)</a>', authors_html, flags=re.DOTALL
+                r"<a [^>]*>(.*?)</a>", authors_html, flags=re.DOTALL
             )
         ]
 
@@ -286,14 +286,14 @@ def _run_cdp_json(args: list[str], timeout_seconds: int = 30) -> dict:
     output = completed.stdout.strip()
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
-        raise ArxivApiUnavailable(
-            f"cdp command failed: cdp {' '.join(args)}; {detail}"
-        )
+        raise ArxivApiUnavailable(f"cdp command failed: cdp {' '.join(args)}; {detail}")
 
     try:
         data = json.loads(output)
     except json.JSONDecodeError as exc:
-        raise ArxivApiUnavailable(f"cdp returned non-JSON output: {output[:200]}") from exc
+        raise ArxivApiUnavailable(
+            f"cdp returned non-JSON output: {output[:200]}"
+        ) from exc
 
     if isinstance(data, dict) and data.get("ok") is False:
         message = data.get("message") or data.get("error") or data.get("code") or data
@@ -444,9 +444,11 @@ def search_papers(query: str, max_results: int = 10):
 
     # Simple intent detection: if the query asks for recent/latest/new papers,
     # sort by submission date; otherwise let arXiv relevance ranking decide.
-    sort_by = "submittedDate" if any(
-        keyword in query.lower() for keyword in ["recent", "latest", "new"]
-    ) else "relevance"
+    sort_by = (
+        "submittedDate"
+        if any(keyword in query.lower() for keyword in ["recent", "latest", "new"])
+        else "relevance"
+    )
 
     # Preferred path: official structured Atom API.
     try:
@@ -457,9 +459,13 @@ def search_papers(query: str, max_results: int = 10):
     except (ArxivApiUnavailable, requests.exceptions.Timeout) as exc:
         fallback_warning = f"{exc}. Used fallback search."
     except requests.exceptions.RequestException as exc:
-        fallback_warning = f"arXiv Atom API request failed: {exc}. Used fallback search."
+        fallback_warning = (
+            f"arXiv Atom API request failed: {exc}. Used fallback search."
+        )
     except ET.ParseError as exc:
-        fallback_warning = f"arXiv Atom API returned invalid XML: {exc}. Used fallback search."
+        fallback_warning = (
+            f"arXiv Atom API returned invalid XML: {exc}. Used fallback search."
+        )
 
     # First fallback: load the human arXiv search page in Chrome through cdp.
     try:
@@ -532,14 +538,16 @@ def summarize_claim(search_result: dict[str, Any], llm_client) -> str:
         )
         summary_lines.append(f"**Top Categories:** {top_categories}")
 
-    summary_lines.extend([
-        "",
-        "## Overall Takeaway",
-        generate_overall_takeaway(query, papers, llm_client),
-        "",
-        "## Papers",
-        "",
-    ])
+    summary_lines.extend(
+        [
+            "",
+            "## Overall Takeaway",
+            generate_overall_takeaway(query, papers, llm_client),
+            "",
+            "## Papers",
+            "",
+        ]
+    )
 
     for index, paper in enumerate(papers, start=1):
         title = paper.get("title", "Untitled")
@@ -548,15 +556,17 @@ def summarize_claim(search_result: dict[str, Any], llm_client) -> str:
         abstract = paper.get("abstract", "")
         arxiv_url = paper.get("arxiv_url", "")
 
-        summary_lines.extend([
-            f"### {index}. {title}",
-            "",
-            f"- **Year:** {year or 'Unknown'}",
-            f"- **Authors:** {format_authors(authors)}",
-            f"- **Summary:** {summarize_abstract(abstract, llm_client)}",
-            f"- **URL:** {arxiv_url}",
-            "",
-        ])
+        summary_lines.extend(
+            [
+                f"### {index}. {title}",
+                "",
+                f"- **Year:** {year or 'Unknown'}",
+                f"- **Authors:** {format_authors(authors)}",
+                f"- **Summary:** {summarize_abstract(abstract, llm_client)}",
+                f"- **URL:** {arxiv_url}",
+                "",
+            ]
+        )
 
     return "\n".join(summary_lines)
 
@@ -643,7 +653,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Search and summarize arXiv papers.")
     parser.add_argument("query", nargs="+", help="User search query")
     parser.add_argument("--max-results", type=int, default=5)
-    parser.add_argument("--summary", action="store_true", help="Print summarized output")
+    parser.add_argument(
+        "--summary", action="store_true", help="Print summarized output"
+    )
     args = parser.parse_args()
 
     from app.config import get_llm_client

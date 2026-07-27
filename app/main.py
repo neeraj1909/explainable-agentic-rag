@@ -11,13 +11,15 @@ from app.observability import setup_phoenix_tracing
 from app.progress import emit_progress
 from app.schemas import AgentResponse
 from app.tools.retrieval_tools import search_papers, summarize_claim
-from app.tools.verification_tools import calculate_faithfulness_stub as calculate_faithfulness
+from app.tools.verification_tools import (
+    calculate_faithfulness_stub as calculate_faithfulness,
+)
 
 
 def build_agent(max_results: int = 5):
     load_dotenv()
     llm = get_llm_client()
-    
+
     def search_papers_with_limit(query: str) -> str:
         """Search arXiv papers using the configured max_results limit."""
         emit_progress(
@@ -26,17 +28,17 @@ def build_agent(max_results: int = 5):
             query=query,
             max_results=max_results,
         )
-        
+
         result = search_papers(query, max_results=max_results)
-        
+
         emit_progress(
             "retrieval_finished",
             "Finished arXiv retrieval",
             query=query,
         )
-        
+
         return result
-    
+
     def summarize_search_results(search_result_json: str) -> str:
         """Summarize JSON arXiv search results."""
         search_result = json.loads(search_result_json)
@@ -103,7 +105,7 @@ def build_agent(max_results: int = 5):
         "Use next_action='retrieve_more' when evidence is weak, "
         "'ask_clarifying_question' when the query is ambiguous, "
         "'human_review' when the answer may be risky or unsupported, "
-        "and 'no_follow_up_needed' when the answer is sufficiently supported." 
+        "and 'no_follow_up_needed' when the answer is sufficiently supported."
     )
 
     # Create the agent with the specified tools
@@ -113,29 +115,29 @@ def build_agent(max_results: int = 5):
             search_papers_with_limit,
             summarize_search_results,
             calculate_faithfulness_with_progress,
-        ], 
+        ],
         system_prompt=system_prompt,
-        response_format =ToolStrategy(AgentResponse),
+        response_format=ToolStrategy(AgentResponse),
     )
-    
+
     return agent
 
 
 def format_agent_response(response: AgentResponse) -> str:
     """Format the agent's structured response into a readable string."""
     confidence_percent = round(response.confidence * 100, 2)
-    
+
     lines = []
-    
+
     lines.append("\n" + "=" * 80)
     lines.append("Research Assistant Response")
     lines.append("=" * 80)
-    
+
     lines.append("\nAnswer:")
     lines.append(f"{response.answer}\n")
-    
+
     lines.append(f"Confidence: {confidence_percent}%\n")
-    
+
     lines.append("\nSources Used:")
     if response.sources_used:
         for index, source in enumerate(response.sources_used, start=1):
@@ -145,17 +147,17 @@ def format_agent_response(response: AgentResponse) -> str:
             lines.append(f"   Why used: {source.reason_used}")
     else:
         lines.append("No sources used.")
-        
+
     lines.append("\nUnsupported Claims:")
     if response.unsupported_claims:
         for claim in response.unsupported_claims:
             lines.append(f"- {claim}")
     else:
         lines.append("None.")
-        
+
     lines.append(f"\nNext Action: {response.next_action.value}")
     lines.append("\n" + "=" * 80)
-    
+
     return "\n".join(lines)
 
 
@@ -166,7 +168,9 @@ def _tool_call_name(tool_call: Any) -> str | None:
     return getattr(tool_call, "name", None)
 
 
-def _print_agent_update(update: dict[str, Any], seen_tool_call_ids: set[str]) -> AgentResponse | None:
+def _print_agent_update(
+    update: dict[str, Any], seen_tool_call_ids: set[str]
+) -> AgentResponse | None:
     """Print progress from one LangGraph/LangChain update chunk."""
     messages = update.get("messages", [])
     if not isinstance(messages, list):
@@ -228,11 +232,17 @@ def stream_agent_response(agent: Any, user_message: str) -> AgentResponse | None
 def main():
     parser = argparse.ArgumentParser(description="Run the research assistant agent.")
     parser.add_argument("--query", required=True, help="User search query")
-    parser.add_argument("--max-results", type=int, default=5, help="Maximum papers to retrieve")
-    parser.add_argument("--summary", action="store_true", help="Return summarized Markdown output")
+    parser.add_argument(
+        "--max-results", type=int, default=5, help="Maximum papers to retrieve"
+    )
+    parser.add_argument(
+        "--summary", action="store_true", help="Return summarized Markdown output"
+    )
     parser.add_argument("--json", action="store_true", help="Print raw JSON output")
-    parser.add_argument("--stream", action="store_true", help="Stream the agent's response in real-time")
-    
+    parser.add_argument(
+        "--stream", action="store_true", help="Stream the agent's response in real-time"
+    )
+
     args = parser.parse_args()
 
     # Load .env and configure Phoenix/OpenInference before constructing or
@@ -249,9 +259,7 @@ def main():
         if structured_response is None:
             raise RuntimeError("Streaming run finished without a structured response.")
     else:
-        result = agent.invoke(
-            {"messages": [{"role": "user", "content": user_message}]}
-        )
+        result = agent.invoke({"messages": [{"role": "user", "content": user_message}]})
         structured_response = result["structured_response"]
 
     if args.json:
@@ -263,4 +271,3 @@ def main():
 
 if __name__ == "__main__":
     main()
- 
