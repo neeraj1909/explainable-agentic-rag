@@ -1,139 +1,140 @@
 # Explainable Agentic RAG with LangGraph
 
-A portfolio project for building a **reliable, explainable, evaluated Agentic RAG system** with LangChain, LangGraph, Phoenix/OpenTelemetry tracing, and RAGAS-style evaluation.
+An applied portfolio project for comparing document-grounded RAG workflows with
+LangChain and LangGraph. The repository emphasizes retrieval attribution,
+controlled orchestration, Phoenix/OpenTelemetry traces, and evaluation—not a
+generic chatbot experience.
 
-This repository is based on the PRP plan in `~/prp-plans/explainable-agentic-rag/` and is designed to demonstrate applied Agentic AI skills: tool calling, structured outputs, retrieval attribution, baseline-vs-agentic comparison, graph orchestration, verifier loops, human review, tracing, and evaluation.
+> **Maturity:** working local prototype. The core workflows run, but comparative
+> evaluation evidence, robust claim verification, interactive human review,
+> deployment packaging, and end-to-end tests are not complete.
 
-> Position this as an **explainable evaluated Agentic RAG system**, not as a generic chatbot.
+## What works today
 
----
+- A structured research assistant with typed tools, streaming, and arXiv search.
+- Local PDF loading from `docs/`, deterministic chunk metadata, and an in-memory
+  vector index built with OpenAI embeddings.
+- Baseline **two-step RAG**: retrieve one top-k evidence set, then answer.
+- **Agentic RAG**: expose `retrieve_documents` as a tool so the model can decide
+  whether and how often to retrieve.
+- A comparison CLI for running two-step and agentic RAG side by side.
+- Source attribution containing file, chunk, page, retriever score, selected
+  rank, optional reranker score, and a selection rationale.
+- A single LangGraph workflow with classification, retrieval, rewrite/retry,
+  heuristic verification, finalization, streaming, and an interrupt path.
+- An orchestrator-led multi-agent graph with planner, retriever, explainer,
+  verifier, route history, streamed events, and file-backed demo checkpoints.
+- Phoenix/OpenTelemetry instrumentation for LangChain and retrieval spans.
+- Ten curated evaluation questions and a RAGAS runner for the two-step baseline.
+- Thirteen local tests covering schemas, CLI behavior, comparison orchestration,
+  retrieval configuration, and attribution.
 
-## Goals
+## Important current limitations
 
-The project demonstrates how to:
+- The index is rebuilt and the PDFs are embedded whenever a retriever is built;
+  it is not persisted or incrementally updated.
+- Retrieval is dense-only. The optional “reranker” is a second embedding
+  similarity pass, not a cross-encoder.
+- Verification uses a token-overlap heuristic from
+  `calculate_faithfulness_stub`; it is not NLI or claim-level entailment.
+- The single graph can interrupt for review, but its CLI path automatically
+  approves the demo instead of asking the user.
+- The multi-agent module runs a hard-coded demo query and does not yet expose a
+  general CLI.
+- RAGAS currently evaluates only two-step RAG. No generated metric report is
+  checked in, so the repository does not yet demonstrate that one mode
+  outperforms another.
+- Output shapes differ between the research assistant, RAG CLI, single graph,
+  and multi-agent graph.
+- There is no HTTP API, web UI, CI workflow, or container deployment yet.
 
-- Build a LangChain agent with typed tools, structured output, streaming, and tracing.
-- Convert a RAG pipeline into an agentic workflow where retrieval is available as a tool.
-- Add explainability through source/chunk attribution, retrieval scores, reranker scores, and selected-evidence rationale.
-- Use LangGraph for controlled, stateful orchestration with conditional routing, retry loops, memory, checkpoints, and human-in-the-loop review.
-- Evaluate answer quality using faithfulness, context precision, context recall, factual correctness, latency, and tool-call metrics.
-
----
-
-## Current Status
-
-Implemented so far:
-
-- Local PDF ingestion from `docs/`.
-- Chunking with stable source, page, and chunk metadata.
-- In-memory vector retrieval using LangChain embeddings.
-- Baseline **2-step RAG**: retrieve evidence, then answer from context.
-- **Agentic RAG**: exposes retrieval as a `retrieve_documents` tool and lets the model decide when and how often to retrieve.
-- Retrieval attribution metadata: source, chunk ID, page, retriever score, selected rank, reranker score, and reason-selected rationale.
-- Compare-mode CLI that runs baseline and agentic RAG side by side.
-- Phoenix/OpenTelemetry tracing for retrieval and model/tool spans.
-- LangGraph-controlled RAG workflow with classification, retrieval, query rewriting, verifier retry loop, finalization, and in-memory checkpointing.
-- Orchestrator-led multi-agent LangGraph workflow with query planner, retriever, explainer, verifier, route history, streaming events, and persistent checkpointing.
-- Evaluation dataset with 10 curated questions and a RAGAS evaluation runner for faithfulness, context precision, context recall, factual correctness, response relevance, and CSV report generation.
-
-Partially implemented:
-
-- Human-in-the-loop review path: the single LangGraph workflow uses an interrupt and resume path, but the CLI still auto-approves the demo review instead of collecting interactive user input.
-- Evaluation reporting: the runner can generate `evaluation/ragas_eval_results.csv`, but the generated report artifact and documented analysis are not checked in yet.
-
-Still planned:
-
-- Interactive human review UX for CLI or app usage.
-- Checked-in evaluation report, trace screenshots, failure cases, and interview notes.
+See [Architecture](docs/architecture.md) for current and target diagrams, and
+[Troubleshooting](docs/troubleshooting.md) for common setup and runtime issues.
 
 ---
 
 ## Architecture
 
+This diagram shows the **current** local-PDF paths. It does not represent the
+planned persistent/hybrid retrieval or claim-level verifier.
+
 ```mermaid
 flowchart TD
-    U[User Query] --> S[Supervisor / Router]
+    P[PDF files in docs/] --> L[Load and chunk]
+    L --> E[OpenAI embeddings]
+    E --> I[In-memory vector index]
 
-    S -->|Simple factual query| B[Baseline 2-Step RAG]
-    S -->|Complex research query| W[Rewrite Query]
-    S -->|Low confidence / unsafe| H[Human Review]
+    Q[User query] --> C{Selected entry point}
+    C --> B[Two-step RAG]
+    C --> A[Agentic RAG]
+    C --> G[Single LangGraph]
+    C --> M[Multi-agent LangGraph demo]
 
-    W --> R[Hybrid Retrieve]
-    R --> K[Rerank]
-    K --> A[Retrieval Attribution]
-    A --> G[Generate Draft Answer]
-    G --> V[Claim Verifier / NLI]
+    I --> B
+    I --> A
+    I --> G
+    I --> M
 
-    V -->|Faithful| F[Final Answer]
-    V -->|Unsupported claims| C{Retry budget left?}
-    C -->|Yes| W
-    C -->|No| H
+    B --> O[Answer and source metadata]
+    A --> O
+    G --> V[Token-overlap verifier]
+    V --> O
+    M --> V
 
-    B --> F
-    H --> F
-
-    F --> O[Answer + Citations + Scores + Trace Link]
+    O --> T[Phoenix / OpenTelemetry spans]
 ```
 
-### Main workflow
+The two-step and agentic modes are selected directly by the RAG CLI. The two
+LangGraph implementations are separate entry points; there is no production
+supervisor routing among all four modes.
 
-1. Classify the user query.
-2. Retrieve evidence when needed.
-3. Rerank and attribute selected chunks.
-4. Generate a draft answer with citations.
-5. Verify claims against retrieved evidence.
-6. Retry with query rewriting when faithfulness is low.
-7. Escalate to human review when confidence remains low.
-8. Return a structured answer with sources, unsupported claims, scores, and trace metadata.
+## Target improvements
 
----
+The next programme of work is deliberately evidence-first:
 
-## Planned Features
+1. Align documentation and configuration with actual behavior.
+2. Introduce a canonical response contract and a small application-service
+   boundary shared by CLI, graphs, evaluation, and future API code.
+3. Evaluate all four RAG modes, including quality, retrieval, latency, cost,
+   tool calls, retries, and failure rate.
+4. Replace token overlap with claim-to-evidence verification.
+5. Add persisted ingestion, dense plus BM25 retrieval, rank fusion, and a
+   measured cross-encoder reranker.
+6. Implement durable human review, followed by a thin API and explainability UI.
+7. Add trace-linked experiments, CI, container deployment, and full end-to-end
+   evidence.
 
-### LangChain foundation
-
-- Basic claim assistant agent.
-- Typed tools such as `search_papers`, `summarize_claim`, and `calculate_faithfulness`.
-- Pydantic structured output.
-- Streaming progress events.
-- LangSmith tracing.
-
-### RAG and attribution
-
-- Baseline retrieval → prompt → answer chain.
-- Retriever exposed as an agent tool.
-- Source, chunk ID, retriever score, reranker score, and reason-selected attribution.
-- Comparison between baseline RAG and agentic RAG.
-
-### LangGraph orchestration
-
-- `StateGraph`-based workflow.
-- Typed graph state.
-- Nodes for classification, retrieval, relevance grading, query rewriting, answer generation, claim verification, finalization, and human review.
-- Conditional routing based on retrieval quality and faithfulness score.
-- Retry budget to prevent infinite loops.
-- Thread-level memory and checkpointing.
-- Graph-level streaming.
-
-### Evaluation and observability
-
-- 10–20 question evaluation set.
-- Faithfulness, context precision, context recall, factual correctness, answer relevance, latency, and tool-call metrics.
-- LangSmith datasets and experiment comparisons.
-- RAGAS-style metric reporting.
-- Trace screenshots and documented failure cases.
+These are targets, not claims about the current implementation. See the target
+architecture in [docs/architecture.md](docs/architecture.md#target-architecture).
 
 ---
 
-## Target Output Schema
+## Output contracts
+
+There is not yet one canonical response schema.
+
+The research assistant currently returns:
+
+```json
+{
+  "answer": "Concise answer grounded in retrieved evidence.",
+  "confidence": 0.82,
+  "sources_used": [],
+  "unsupported_claims": [],
+  "next_action": "no_follow_up_needed"
+}
+```
+
+The single LangGraph workflow currently returns:
 
 ```json
 {
   "answer": "Concise answer grounded in retrieved evidence.",
   "sources": [
     {
-      "doc_id": "paper-001",
+      "source": "docs/paper.pdf",
       "chunk_id": "chunk-03",
+      "page": 4,
       "retriever_score": 0.82,
       "reranker_score": 0.91,
       "reason_selected": "Contains direct evidence for the central claim."
@@ -141,23 +142,23 @@ flowchart TD
   ],
   "faithfulness_score": 0.87,
   "unsupported_claims": [],
-  "confidence": 0.84,
-  "next_action": "No follow-up needed.",
-  "trace_id": "langsmith-trace-id"
+  "verified": true,
+  "retry_count": 0
 }
 ```
+
+The planned canonical contract will add schema, trace, corpus/index, route, and
+verification metadata only after it is implemented and tested.
 
 ---
 
 ## Repository Structure
 
-Current implementation is organized to match the PRP's suggested `app/` layout
-while leaving Day-2/Day-3 modules ready for incremental implementation.
-
 ```text
 .
-├── README.md
 ├── .env.example
+├── LICENSE
+├── README.md
 ├── pyproject.toml
 ├── uv.lock
 ├── app/
@@ -185,9 +186,16 @@ while leaving Day-2/Day-3 modules ready for incremental implementation.
 │   │   ├── two_step_rag.py
 │   │   └── vectorstore.py
 │   ├── graphs/
-│   │   └── __init__.py
+│   │   ├── __init__.py
+│   │   ├── agentic_rag_graph.py
+│   │   ├── graph_hello_world.py
+│   │   ├── multi_agent_graph.py
+│   │   └── state.py
 │   └── evaluation/
-│       └── __init__.py
+│       ├── __init__.py
+│       ├── eval_dataset.jsonl
+│       ├── eval_dataset_readable.md
+│       └── run_ragas_eval.py
 ├── notebooks/
 ├── tests/
 │   ├── test_rag_cli.py
@@ -195,51 +203,108 @@ while leaving Day-2/Day-3 modules ready for incremental implementation.
 │   ├── test_rag_retriever.py
 │   └── test_schemas.py
 └── docs/
+    ├── architecture.md
+    ├── troubleshooting.md
+    └── *.pdf
 ```
+
+Generated local state such as `.env`, `.venv/`, `.ruff_cache/`, and
+`.langgraph_checkpoints/` is intentionally omitted.
 
 ---
 
-## Setup
+## Prerequisites
 
-This project uses `uv` with dependencies declared in `pyproject.toml`.
+- Python 3.11 or newer, as declared in `pyproject.toml`.
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/).
+- An OpenAI-compatible chat endpoint and credentials.
+- An OpenAI API key for the current embedding implementation.
+- Optional: Docker for a local Phoenix trace collector.
+
+If `uv` is not installed, use its official standalone installer:
 
 ```bash
-git clone <repo-url>
-cd explainable-agentic-rag
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
+The linked `uv` installation guide above includes package-manager and Windows
+alternatives.
+
+## Setup
+
+```bash
+git clone https://github.com/neeraj1909/explainable-agentic-rag.git
+cd explainable-agentic-rag
 uv sync
 cp .env.example .env
 ```
 
-Configure `.env` with your LiteLLM/OpenAI-compatible chat endpoint, embedding settings, and tracing settings:
+Edit `.env`. The current code uses separate chat and embedding clients:
 
-```bash
-LITELLM_MODEL=chatgpt/gpt-5.5
-LITELLM_API_KEY=your_litellm_or_openai_compatible_key
-LITELLM_API_BASE=https://your-litellm-or-openai-compatible-endpoint
+```dotenv
+# Chat model: OpenAI directly or an OpenAI-compatible/LiteLLM endpoint
+LITELLM_MODEL=<chat-model-name>
+LITELLM_API_KEY=<chat-api-key>
+LITELLM_API_BASE=<proxy-base-url-or-empty>
 LITELLM_STREAMING=true
 
+# PDF indexing and retrieval embeddings
 OPENAI_EMBEDDING_MODEL=text-embedding-3-large
-OPENAI_API_KEY=your_openai_key_for_embeddings
+OPENAI_API_KEY=<openai-api-key>
 
-# Optional reranker. Disabled by default unless set to true.
+# Optional second embedding-similarity ranking pass
 RAG_USE_RERANKER=false
 RAG_RERANKER_EMBEDDING_MODEL=text-embedding-3-small
 
+# Phoenix/OpenTelemetry
 PHOENIX_PROJECT_NAME=explainable-agentic-rag
-PHOENIX_COLLECTOR_ENDPOINT=http://10.20.30.1:16006/v1/traces
+PHOENIX_COLLECTOR_ENDPOINT=http://localhost:6006/v1/traces
 ```
+
+`LITELLM_API_BASE` may be left empty when the chat client connects directly to
+OpenAI. The current embeddings client does not reuse `LITELLM_API_BASE`.
+
+### Start Phoenix locally
+
+For local development, run Phoenix in a separate terminal:
+
+```bash
+docker run --rm --name phoenix \
+    -p 6006:6006 \
+    -p 4317:4317 \
+    arizephoenix/phoenix:latest
+```
+
+Open <http://localhost:6006>. The `latest` tag is convenient for local
+experimentation; a future containerized release will pin a tested version.
+See the [official Phoenix Docker guide](https://arize.com/docs/phoenix/self-hosting/deployment-options/docker/)
+for persistence and PostgreSQL options.
+
+### Corpus, cost, and privacy
+
+Every `*.pdf` directly under `docs/` is loaded. The checked-in corpus currently
+contains research papers and `docs/neeraj_cv.pdf`.
+
+- PDF chunks are sent to the configured embedding provider whenever a retriever
+  is built because the current vector index is in memory.
+- Queries and retrieved context are sent to the configured chat provider.
+- Enabling the optional reranker creates additional embedding requests.
+- The evaluation runner makes multiple model and evaluator calls across ten
+  questions.
+
+Review document licenses and remove private material before using a different
+corpus or sharing traces. Do not commit `.env`; it is ignored by Git.
 
 ---
 
-## Usage Targets
+## Usage
 
-### Day-1 Basic LangChain agent
+### Research assistant
 
-After the package cleanup, run the agent as a module from the repository root:
+This entry point searches arXiv rather than the local PDF corpus:
 
 ```bash
-uv run python3 -m app.main \
+uv run python -m app.main \
     --query "Does reranking improve RAG faithfulness?" \
     --max-results 10 \
     --stream
@@ -248,14 +313,16 @@ uv run python3 -m app.main \
 Optional JSON output:
 
 ```bash
-uv run python3 -m app.main \
+uv run python -m app.main \
     --query "Does reranking improve RAG faithfulness?" \
     --max-results 10 \
     --stream \
     --json
 ```
 
-### Day-2 RAG CLI
+It requires internet access in addition to the configured chat model.
+
+### Local PDF RAG CLI
 
 Run baseline two-step RAG:
 
@@ -322,79 +389,147 @@ The resulting answer identifies SafeSpeech's main contributions as:
 
 Cited chunks include `docs/s13278-024-01393-9.pdf` pages 0, 1, 6, 18, and 19.
 
----
+### Single LangGraph workflow
 
-## Evaluation Plan
+Run the classifier, retrieval, rewrite/retry, heuristic verifier, and finalizer:
 
-| System | Faithfulness | Context precision | Context recall | Factual correctness | Latency | Notes |
-|---|---:|---:|---:|---:|---:|---|
-| Baseline RAG | TBD | TBD | TBD | TBD | TBD | Retrieval → answer only |
-| LangChain Agentic RAG | TBD | TBD | TBD | TBD | TBD | Retriever available as tool |
-| LangGraph Agentic RAG | TBD | TBD | TBD | TBD | TBD | Controlled state, verifier loop, human review |
+```bash
+uv run python -m app.graphs.agentic_rag_graph \
+    --query "What are the main contributions of the SafeSpeech paper?" \
+    --k 5
+```
 
-Evaluation should compare:
+Add `--json` for the raw final object or `--stream` for graph progress events.
+The graph contains an interrupt-and-resume branch, but the current CLI does not
+ask for a decision: it auto-approves the demo review. Treat this as a prototype
+path, not a durable human-approval control.
 
-- Baseline RAG vs agentic RAG.
-- Agentic RAG vs LangGraph-controlled RAG.
-- Successful runs vs verifier-triggered retry runs.
-- Latency and tool-call cost trade-offs.
+### Multi-agent LangGraph demo
 
----
+```bash
+uv run python -m app.graphs.multi_agent_graph
+```
 
-## Implementation Roadmap
+This module currently uses a hard-coded question and thread ID. It streams
+planner, retriever, explainer, verifier, and routing events, then stores local
+demo checkpoint data under `.langgraph_checkpoints/`.
 
-### Day 1 — LangChain applied foundation
+### Inspect command surfaces without model calls
 
-- [x] Build a basic LangChain agent.
-- [x] Add at least three typed tools.
-- [x] Add structured Pydantic output.
-- [x] Add response/progress streaming.
-- [x] Enable Phoenix/OpenTelemetry tracing.
+These commands parse configuration and print help without embedding documents
+or calling a model:
 
-### Day 2 — RAG and evaluation
-
-- [x] Implement baseline RAG.
-- [x] Wrap retrieval as an agent tool.
-- [x] Add retrieval attribution.
-- [x] Create 10–20 evaluation questions.
-- [x] Add RAGAS faithfulness/context evaluation runner.
-- [x] Add unit tests for schemas, retrieval attribution, CLI formatting, and compare-mode orchestration.
-- [ ] Check in evaluation report analysis and generated metric artifacts.
-
-### Day 3–4 — LangGraph and portfolio polish
-
-- [x] Define typed graph state.
-- [x] Build LangGraph nodes and conditional edges.
-- [x] Add query rewrite and verifier retry loops.
-- [x] Add memory/checkpointing.
-- [~] Add human-in-the-loop review interrupt and resume path; replace demo auto-approval with interactive input.
-- [ ] Add trace screenshots, failure cases, and interview notes.
+```bash
+uv run python -m app.main --help
+uv run python -m app.rag.cli --help
+uv run python -m app.graphs.agentic_rag_graph --help
+```
 
 ---
 
-## Interview Talking Points
+## Evaluation status
 
-This project is intended to support the following interview narrative:
+`app/evaluation/eval_dataset.jsonl` contains ten curated questions with
+reference answers. Validate the dataset without making model calls:
 
-> I use LangChain for fast model, tool, and structured-output integration, and LangGraph when I need deterministic control over stateful, multi-step agent workflows. In this project, I converted a RAG agent into a LangGraph workflow with retrieval, reranking, attribution, claim verification, conditional retry, memory, human review, LangSmith tracing, and faithfulness-focused evaluation.
+```bash
+uv run python -c \
+    "from app.evaluation.run_ragas_eval import validate_eval_set; validate_eval_set(); print('evaluation dataset valid')"
+```
+
+The current RAGAS runner evaluates only two-step RAG with faithfulness, context
+precision, context recall, factual correctness, and response relevance:
+
+```bash
+mkdir -p evaluation
+uv run python -m app.evaluation.run_ragas_eval
+```
+
+This is a paid, networked run: it rebuilds the in-memory index, answers all ten
+questions, and makes evaluator-model calls. Results are written to
+`evaluation/ragas_eval_results.csv`; that directory and report are generated
+artifacts and are not currently part of the repository. Comparative evaluation
+across all four modes, latency, cost, tool calls, retries, and failures remains
+planned.
+
+## Tests
+
+Run the local test suite:
+
+```bash
+uv run pytest -q
+```
+
+Ruff is not yet declared as a project development dependency. If it is available
+in your environment, inspect the current lint state with:
+
+```bash
+uv run ruff check .
+```
+
+Do not add `--fix` when you only intend to inspect lint findings.
+
+---
+
+## Implementation status
+
+### Working prototype capabilities
+
+- [x] Typed research tools, structured output, streaming, and Phoenix tracing.
+- [x] Two-step and agentic local-PDF RAG.
+- [x] Retrieval attribution and optional embedding-similarity reranking.
+- [x] Single and multi-agent LangGraph prototypes with bounded retries.
+- [x] Ten-question dataset and two-step RAGAS runner.
+- [x] Local unit tests for the existing CLI, schemas, and retrieval behavior.
+
+### Partial capabilities
+
+- [x] An interrupt-and-resume branch exists in the single graph.
+- [ ] Collect and persist a real user approval or rejection.
+- [x] A token-overlap faithfulness heuristic gates graph retries.
+- [ ] Replace the heuristic with claim-to-evidence verification.
+- [x] A baseline evaluation runner exists.
+- [ ] Produce reproducible comparative evidence for all four modes.
+
+### Planned reliability and productization
+
+- [ ] Canonical response and error contracts.
+- [ ] Persistent, incremental hybrid retrieval with measured reranking.
+- [ ] Application-service boundary shared by CLI, graphs, evaluation, and API.
+- [ ] Thin API and explainability UI.
+- [ ] CI, container packaging, integration tests, and end-to-end evidence.
+
+---
+
+## Interview talking points
+
+An accurate current narrative is:
+
+> I use LangChain for model, tool, and structured-output integration, and
+> LangGraph for explicit state and bounded routing. This prototype compares
+> fixed and agent-controlled retrieval, preserves source attribution, exposes
+> Phoenix/OpenTelemetry traces, and includes a baseline RAGAS harness. Its
+> present verifier is heuristic and human review is not yet interactive, so
+> those are measured next steps rather than completed reliability claims.
 
 Be prepared to explain:
 
-1. Why LangGraph is useful beyond a simple LangChain agent.
-2. How typed graph state is defined and updated.
-3. How conditional edges route between retrieval, rewrite, verification, and human review.
-4. How retry loops stop safely.
-5. How thread memory and checkpoints work.
-6. How faithfulness and unsupported claims are measured.
-7. How LangSmith traces are used to debug failed runs.
-8. How baseline RAG, agentic RAG, and LangGraph RAG compare.
+1. Why fixed retrieval remains a useful baseline for an agentic workflow.
+2. How metadata survives loading, chunking, retrieval, and final attribution.
+3. How typed graph state and conditional edges bound retry behavior.
+4. What in-memory and file-backed checkpointing do—and do not—provide.
+5. Why token overlap is not semantic entailment.
+6. How Phoenix traces help inspect model, tool, and retrieval behavior.
+7. Why current RAGAS results cannot establish a winner across all modes.
+8. Which evidence gates should precede an API or UI.
 
----
+## License
 
-## Reference Plan
+Released under the [MIT License](LICENSE).
 
-Source planning document:
+## Project history
 
-```text
-~/prp-plans/explainable-agentic-rag/langchain_langgraph_agentic_ai_plan.md
-```
+This repository began as a time-boxed LangChain/LangGraph learning and portfolio
+sprint. This README describes the checked-in implementation; future claims
+should move from the target sections into current status only with code and
+validation evidence in the repository.
