@@ -47,3 +47,9 @@ dist/
 
 # Local RAG index artifacts
 .rag-index/
+
+# Generated evaluation outputs. Keep reviewed Markdown/JSON summaries outside
+# these raw-output directories so they remain eligible for version control.
+/evaluation/
+/artifacts/evaluation/runs/
+/artifacts/evaluation/baseline/raw/

@@ -1,0 +1,81 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-07-28T17:51:11.687992Z",
+  "git": {
+    "commit": "578cc93a2a44450514f6e7a06aeaee7f0a03e78f",
+    "dirty": true
+  },
+  "corpus": {
+    "docs_dir": "docs",
+    "sha256": "23736487f4fcf5246128c94663ac550964d58d714ac780ca695080f2372b1efd",
+    "files": [
+      {
+        "path": "docs/2311.08314v1.pdf",
+        "sha256": "2a750ba510db9c96753fc251ef608d0f2f0fa67d47daf654c5646bee72240a10",
+        "size_bytes": 2196629
+      },
+      {
+        "path": "docs/2411.12643v2.pdf",
+        "sha256": "1f09d3ce1138dc8c44a4eeedfbad528d7416c032276ca53c907394d5c6f0b114",
+        "size_bytes": 2875255
+      },
+      {
+        "path": "docs/2502.03014v1.pdf",
+        "sha256": "ff4d73d661aea42648ca044bca0af4c30297d1c1d0e5b7215c83849cfd6cfb57",
+        "size_bytes": 555405
+      },
+      {
+        "path": "docs/2507.08330v2.pdf",
+        "sha256": "bc1220e72b0e2513daee51c987fa415647b6af4ca5638a489857ab69e365b9f6",
+        "size_bytes": 2826134
+      },
+      {
+        "path": "docs/T7-4.pdf",
+        "sha256": "8e1f676f11b3ce36b2f3fce2d7ca688d1023c06dc1227fc6896e6534d770f6cf",
+        "size_bytes": 1004360
+      },
+      {
+        "path": "docs/neeraj_cv.pdf",
+        "sha256": "e5f1931fa46d28d886ac8373999b27160aa0cc348186ce391f05ae7c33ae548e",
+        "size_bytes": 47604
+      },
+      {
+        "path": "docs/s13278-024-01393-9.pdf",
+        "sha256": "f7acea471c827ed66a77d28042e57b46ed70b692b0cb0285d9e9bb5ca6c0ebeb",
+        "size_bytes": 3769881
+      }
+    ]
+  },
+  "dataset": {
+    "path": "app/evaluation/eval_dataset.jsonl",
+    "sha256": "3169a72e6ad84b52d0c38608d2e45d46f87167c6acc901331450ceec9a67466f",
+    "question_count": 10,
+    "source_labeled_question_count": 10,
+    "chunk_labeled_question_count": 0
+  },
+  "models": {
+    "chat_model": "chatgpt/gpt-5.5",
+    "embedding_model": "text-embedding-3-large",
+    "temperature": 0.0,
+    "streaming": false,
+    "chat_timeout_seconds": 30.0,
+    "embedding_timeout_seconds": 30.0
+  },
+  "retrieval": {
+    "index_dir": ".rag-index",
+    "chunk_size": 800,
+    "chunk_overlap": 120,
+    "top_k": 4,
+    "fetch_k_multiplier": 4,
+    "reranker_enabled": false,
+    "reranker_model": "text-embedding-3-small"
+  },
+  "dependencies": {
+    "lock_path": "uv.lock",
+    "lock_sha256": "af7658cd171c94ff5434c37ba6d695521fb00d361477986e2240586214e86a18"
+  },
+  "evaluation": {
+    "remote_run_performed": false,
+    "reason": "Not run: owner approval is required for model endpoint and budget."
+  }
+}

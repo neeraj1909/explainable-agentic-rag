@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from langchain_core.output_parsers import StrOutputParser
@@ -16,36 +15,28 @@ from ragas.metrics._factual_correctness import FactualCorrectness
 from ragas.metrics._answer_relevance import ResponseRelevancy
 
 from app.config import get_embedding_client, get_llm_client
+from app.evaluation.run_manifest import (
+    EVAL_DATASET_PATH,
+    REPO_ROOT,
+    EvaluationExample,
+    load_evaluation_dataset,
+)
 from app.rag.config import TOP_K
 from app.rag.prompts import rag_prompt
 from app.rag.retriever import build_attributed_retriever
 from app.rag.two_step_rag import format_context
 
-# ----------------------------------------------------------------------
-# 1. Load 10-20 manually curated questions + reference answers.
-#    References are written from docs/ source material.
-# ----------------------------------------------------------------------
-EVAL_DATASET_PATH = Path(__file__).with_name("eval_dataset.jsonl")
 
+def load_eval_set(path: Path = EVAL_DATASET_PATH) -> list[EvaluationExample]:
+    """Load the curated dataset through the offline ground-truth validator."""
 
-def load_eval_set(path: Path = EVAL_DATASET_PATH) -> list[dict[str, str]]:
-    with path.open(encoding="utf-8") as dataset_file:
-        return [json.loads(line) for line in dataset_file if line.strip()]
-
-
-EVAL_SET = load_eval_set()
+    return load_evaluation_dataset(path, repo_root=REPO_ROOT)
 
 
 def validate_eval_set() -> None:
-    if not (10 <= len(EVAL_SET) <= 20):
-        raise ValueError("EVAL_SET should contain 10-20 questions.")
+    """Retained for callers of the original validation helper."""
 
-    for index, row in enumerate(EVAL_SET, start=1):
-        if row["reference"].startswith("TODO"):
-            raise ValueError(
-                f"Question {index} still has a TODO reference. "
-                "Write the ground-truth answer before running Ragas."
-            )
+    load_eval_set()
 
 
 def build_non_streaming_chat_llm() -> ChatOpenAI:
@@ -93,13 +84,13 @@ def run_two_step_rag_for_eval(question: str, k: int = TOP_K) -> dict:
 
 
 def main() -> None:
-    validate_eval_set()
+    eval_set = load_eval_set()
 
     rows = []
 
-    for item in EVAL_SET:
-        question = item["user_input"]
-        reference = item["reference"]
+    for item in eval_set:
+        question = item.user_input
+        reference = item.reference
 
         rag_result = run_two_step_rag_for_eval(question)
 

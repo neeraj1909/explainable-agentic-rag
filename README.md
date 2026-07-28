@@ -27,9 +27,11 @@ generic chatbot experience.
 - Phoenix/OpenTelemetry instrumentation for LangChain and retrieval spans.
 - Centralized Pydantic settings for provider credentials, timeouts, retrieval
   defaults, corpus/index paths, feature flags, and Phoenix configuration.
-- Ten curated evaluation questions and a RAGAS runner for the two-step baseline.
-- Twenty-three local tests covering typed configuration, schemas, CLI behavior,
-  comparison orchestration, retrieval configuration, and attribution.
+- Ten curated evaluation questions with reviewed document relevance labels, a
+  no-LLM provenance manifest, and a RAGAS runner for the two-step baseline.
+- Thirty-one local tests covering typed configuration, schemas, CLI behavior,
+  comparison orchestration, retrieval configuration, attribution, evaluation
+  ground truth, and manifest reproducibility.
 
 ## Important current limitations
 
@@ -46,8 +48,8 @@ generic chatbot experience.
 - RAGAS currently evaluates only two-step RAG. No generated metric report is
   checked in, so the repository does not yet demonstrate that one mode
   outperforms another.
-- There is no immutable run manifest tying results to corpus hashes, settings,
-  dependency lock state, and a Git commit.
+- The checked baseline manifest freezes inputs and configuration, but no paid
+  remote-model run or performance metrics have been approved or recorded.
 - Output shapes differ between the research assistant, RAG CLI, single graph,
   and multi-agent graph.
 - There is no HTTP API, web UI, CI workflow, or container deployment yet.
@@ -96,8 +98,8 @@ supervisor routing among all four modes.
 
 The next programme of work is deliberately evidence-first:
 
-1. Freeze a reproducible baseline with corpus hashes, configuration provenance,
-   dependency-lock state, and dataset validation.
+1. Use the frozen corpus/configuration baseline to make subsequent evaluation
+   runs reproducible and comparable.
 2. Introduce a canonical response contract and a small application-service
    boundary shared by CLI, graphs, evaluation, and future API code.
 3. Evaluate all four RAG modes, including quality, retrieval, latency, cost,
@@ -166,6 +168,11 @@ verification metadata only after it is implemented and tested.
 ├── README.md
 ├── pyproject.toml
 ├── uv.lock
+├── artifacts/
+│   └── evaluation/
+│       └── baseline/
+│           ├── README.md
+│           └── manifest.json
 ├── app/
 │   ├── __init__.py
 │   ├── main.py
@@ -200,6 +207,7 @@ verification metadata only after it is implemented and tested.
 │       ├── __init__.py
 │       ├── eval_dataset.jsonl
 │       ├── eval_dataset_readable.md
+│       ├── run_manifest.py
 │       └── run_ragas_eval.py
 ├── notebooks/
 ├── tests/
@@ -207,6 +215,7 @@ verification metadata only after it is implemented and tested.
 │   ├── test_rag_cli.py
 │   ├── test_rag_compare.py
 │   ├── test_rag_retriever.py
+│   ├── test_run_manifest.py
 │   └── test_schemas.py
 └── docs/
     ├── architecture.md
@@ -463,12 +472,31 @@ uv run python -m app.graphs.agentic_rag_graph --help
 ## Evaluation status
 
 `app/evaluation/eval_dataset.jsonl` contains ten curated questions with
-reference answers. Validate the dataset without making model calls:
+reference answers and reviewed document-level relevance labels. Chunk labels
+remain empty because the current global sequential chunk IDs are not stable
+when corpus order changes.
+
+Validate the dataset and checked baseline manifest without making model calls:
 
 ```bash
-uv run python -c \
-    "from app.evaluation.run_ragas_eval import validate_eval_set; validate_eval_set(); print('evaluation dataset valid')"
+uv run python -m app.evaluation.run_manifest validate-dataset
+uv run python -m app.evaluation.run_manifest \
+  validate-manifest artifacts/evaluation/baseline/manifest.json
 ```
+
+The checked manifest records the seven PDF hashes, aggregate corpus digest,
+dataset and dependency-lock hashes, Git provenance, model identifiers,
+retrieval/chunk settings, reranker state, temperature, and timestamp. Generate
+a no-LLM candidate manifest for a future run with:
+
+```bash
+uv run python -m app.evaluation.run_manifest generate
+```
+
+See
+[`artifacts/evaluation/baseline/README.md`](artifacts/evaluation/baseline/README.md)
+for the hash algorithm, ground-truth scope, comparison instructions, and
+artifact-retention policy.
 
 The current RAGAS runner evaluates only two-step RAG with faithfulness, context
 precision, context recall, factual correctness, and response relevance:
@@ -480,10 +508,10 @@ uv run python -m app.evaluation.run_ragas_eval
 
 This is a paid, networked run: it rebuilds the in-memory index, answers all ten
 questions, and makes evaluator-model calls. Results are written to
-`evaluation/ragas_eval_results.csv`; that directory and report are generated
-artifacts and are not currently part of the repository. Comparative evaluation
-across all four modes, latency, cost, tool calls, retries, and failures remains
-planned.
+`evaluation/ragas_eval_results.csv`. The generated `evaluation/` directory and
+raw run directories under `artifacts/evaluation/` are ignored; only small,
+reviewed summaries should be committed. Comparative evaluation across all four
+modes, latency, cost, tool calls, retries, and failures remains planned.
 
 ## Tests
 
@@ -522,7 +550,8 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 - [x] Two-step and agentic local-PDF RAG.
 - [x] Retrieval attribution and optional embedding-similarity reranking.
 - [x] Single and multi-agent LangGraph prototypes with bounded retries.
-- [x] Ten-question dataset and two-step RAGAS runner.
+- [x] Ten-question dataset, reviewed document labels, reproducible input/config
+  manifest, and two-step RAGAS runner.
 - [x] Local tests for configuration, CLI, schemas, and retrieval behavior.
 
 ### Partial capabilities

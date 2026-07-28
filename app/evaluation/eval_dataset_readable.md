@@ -3,10 +3,17 @@
 Readable companion for `eval_dataset.jsonl`. The JSONL file remains machine-readable;
 this Markdown version is wrapped for easy review in a terminal or editor.
 
+All ten questions have reviewed document-level relevance labels. Chunk-level labels are
+intentionally empty because the current global `chunk-N` identifiers change when corpus
+load order changes; stable chunk IDs are planned before chunk adjudication.
+
 ## 1
 
 User input:
 What is SafeSpeech and what problem does it address?
+
+Expected relevant documents:
+`docs/s13278-024-01393-9.pdf`
 
 Reference:
 SafeSpeech is a cost-effective three-module pipeline for social-media text in Indic
@@ -21,6 +28,9 @@ annotated hate-span data.
 User input:
 What are the main modules or stages in the SafeSpeech pipeline?
 
+Expected relevant documents:
+`docs/s13278-024-01393-9.pdf`
+
 Reference:
 SafeSpeech has three main modules: Hate Speech Classification, Hate Intensity
 Identification, and Hate Intensity Mitigation. The first module detects whether input
@@ -32,6 +42,9 @@ generate a less hateful or non-hate version of the text.
 
 User input:
 What task is studied in the code-mixed hate-speech identification paper?
+
+Expected relevant documents:
+`docs/T7-4.pdf`
 
 Reference:
 The paper studies conversational hate-speech and offensive-content identification in
@@ -45,6 +58,9 @@ into standalone hate, contextual hate, and non-hate.
 User input:
 What is DLBacktrace intended to explain?
 
+Expected relevant documents:
+`docs/2411.12643v2.pdf`
+
 Reference:
 DLBacktrace is intended to explain decisions made by deep learning models. It traces
 relevance from the model output back to the input to show feature importance, layer
@@ -53,7 +69,10 @@ importance, information flow, and possible biases in predictions.
 ## 5
 
 User input:
-What is DLBacktrace described as model agnostic?
+Why is DLBacktrace described as model agnostic?
+
+Expected relevant documents:
+`docs/2411.12643v2.pdf`
 
 Reference:
 DLBacktrace is described as model agnostic because it computes relevance directly from
@@ -67,6 +86,9 @@ data, images, and text, with support for PyTorch and TensorFlow.
 User input:
 What does the xai_evals framework evaluate?
 
+Expected relevant documents:
+`docs/2502.03014v1.pdf`
+
 Reference:
 xai_evals evaluates post-hoc local explanation methods for machine learning and deep
 learning models. It generates, benchmarks, and evaluates explanations from methods such
@@ -77,7 +99,10 @@ comprehensiveness, and related explanation-quality measures.
 ## 7
 
 User input:
-What is interpretability-aware pruning used for in medicalimage analysis?
+What is interpretability-aware pruning used for in medical image analysis?
+
+Expected relevant documents:
+`docs/2507.08330v2.pdf`
 
 Reference:
 Interpretability-aware pruning is used to compress deep neural networks for medical
@@ -91,6 +116,9 @@ components to reduce model size, memory, and computation for healthcare deployme
 User input:
 What biological-neuron attributes are explored in the CNN paper?
 
+Expected relevant documents:
+`docs/2311.08314v1.pdf`
+
 Reference:
 The CNN paper explores neuroscience-inspired properties of LGN cells and simple cells in
 the primary visual cortex. These include center-on and center-off center-surround
@@ -103,6 +131,9 @@ Pull inhibition with opposite-contrast responses.
 User input:
 What are Neeraj Kumar Singh's main research areas according to the CV?
 
+Expected relevant documents:
+`docs/neeraj_cv.pdf`
+
 Reference:
 According to the CV, Neeraj Kumar Singh’s main research areas are deep learning for NLP
 and computer vision, with specialization in explainable AI and model interpretability.
@@ -114,6 +145,11 @@ explainable RAG.
 
 User input:
 Which papers in the corpus are related to explainable AI or interpretability?
+
+Expected relevant documents:
+`docs/2411.12643v2.pdf`, `docs/2502.03014v1.pdf`,
+`docs/2507.08330v2.pdf`, `docs/s13278-024-01393-9.pdf`, and
+`docs/2311.08314v1.pdf`
 
 Reference:
 The corpus papers most directly related to explainable AI or interpretability are
