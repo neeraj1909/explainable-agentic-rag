@@ -8,9 +8,10 @@ code that exists today.
 
 The project is a local prototype for comparing document-grounded RAG patterns.
 It has multiple entry points, shared retrieval utilities, Phoenix/OpenTelemetry
-instrumentation, and a small test suite. It does not yet have a shared
-application-service boundary, a canonical response contract, a persistent
-index, an HTTP API, or production deployment packaging.
+instrumentation, a reproducible input manifest, and strict canonical contract
+definitions. It does not yet have a shared application-service boundary,
+runtime adoption of the canonical contract, a persistent index, an HTTP API, or
+production deployment packaging.
 
 ## Current entry points
 
@@ -24,8 +25,9 @@ index, an HTTP API, or production deployment packaging.
 | `app.graphs.multi_agent_graph` | `docs/*.pdf` | Orchestrator-led multi-agent graph | Answer, route history, sources, verifier state |
 | `app.evaluation.run_ragas_eval` | Ten-question JSONL set and `docs/*.pdf` | Two-step RAG plus RAGAS evaluators | Console table and CSV |
 
-The entry points do not currently share one response or error schema. The RAG
-CLI selects a mode directly; there is no top-level router that chooses among all
+The entry points do not currently emit the canonical response or share one error
+schema. `app/contracts.py` defines the versioned target wire shape, while the
+RAG CLI still selects a mode directly and no top-level router chooses among all
 four local-PDF workflows.
 
 ## Current local-PDF data flow
@@ -57,6 +59,11 @@ cosine similarity. It is not a cross-encoder.
 - `app/config.py` owns the typed settings model, context-specific credential
   checks, and construction of the OpenAI-compatible chat client and separate
   OpenAI embeddings client.
+- `app/schemas.py` retains the unchanged public `AgentResponse` used by the
+  research assistant.
+- `app/contracts.py` defines strict versioned request, response, evidence,
+  verification, metrics, route, and progress-event models plus the explicit
+  legacy response adapter.
 - `app/observability.py` registers Phoenix/OpenTelemetry and instruments
   LangChain calls.
 - `app/rag/loaders.py` loads PDF pages and attaches source/page metadata.
@@ -124,11 +131,12 @@ the trace store as sensitive data and review it before sharing.
 
 - Chat and embeddings have separate credentials and endpoint behavior.
 - Index construction is synchronous, paid, and repeated per retriever build.
-- There is no corpus manifest, content-hash version, or document-level access
-  policy.
+- A checked pre-change corpus/configuration manifest exists, but the runtime
+  does not yet propagate its version or enforce document-level access policy.
 - There is no lexical/BM25 retrieval or rank fusion.
 - There is no measured cross-encoder reranker.
-- Output and failure contracts vary by entry point.
+- Runtime output and failure contracts vary by entry point despite the new
+  canonical contract definitions.
 - Human review is not interactive or durable.
 - Only the two-step mode has a RAGAS runner.
 - There are no HTTP, UI, CI, Docker application, or end-to-end layers.

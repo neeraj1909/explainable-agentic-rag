@@ -27,9 +27,11 @@ generic chatbot experience.
 - Phoenix/OpenTelemetry instrumentation for LangChain and retrieval spans.
 - Centralized Pydantic settings for provider credentials, timeouts, retrieval
   defaults, corpus/index paths, feature flags, and Phoenix configuration.
+- Strict versioned request, response, evidence, verification, confidence,
+  metrics, route, and progress-event contracts with a legacy response adapter.
 - Ten curated evaluation questions with reviewed document relevance labels, a
   no-LLM provenance manifest, and a RAGAS runner for the two-step baseline.
-- Thirty-one local tests covering typed configuration, schemas, CLI behavior,
+- Forty-seven local tests covering typed configuration, schemas, CLI behavior,
   comparison orchestration, retrieval configuration, attribution, evaluation
   ground truth, and manifest reproducibility.
 
@@ -50,8 +52,9 @@ generic chatbot experience.
   outperforms another.
 - The checked baseline manifest freezes inputs and configuration, but no paid
   remote-model run or performance metrics have been approved or recorded.
-- Output shapes differ between the research assistant, RAG CLI, single graph,
-  and multi-agent graph.
+- Runtime output shapes still differ between the research assistant, RAG CLI,
+  single graph, and multi-agent graph; the canonical contract exists but those
+  entry points have not yet migrated to it.
 - There is no HTTP API, web UI, CI workflow, or container deployment yet.
 
 See [Architecture](docs/architecture.md) for current and target diagrams, and
@@ -100,7 +103,7 @@ The next programme of work is deliberately evidence-first:
 
 1. Use the frozen corpus/configuration baseline to make subsequent evaluation
    runs reproducible and comparable.
-2. Introduce a canonical response contract and a small application-service
+2. Adopt the canonical response contract through a small application-service
    boundary shared by CLI, graphs, evaluation, and future API code.
 3. Evaluate all four RAG modes, including quality, retrieval, latency, cost,
    tool calls, retries, and failure rate.
@@ -118,7 +121,9 @@ architecture in [docs/architecture.md](docs/architecture.md#target-architecture)
 
 ## Output contracts
 
-There is not yet one canonical response schema.
+A strict canonical v1 schema now exists in `app/contracts.py`, but the current
+runtime entry points have not migrated to it yet. The examples below therefore
+remain the actual public output shapes.
 
 The research assistant currently returns:
 
@@ -154,8 +159,17 @@ The single LangGraph workflow currently returns:
 }
 ```
 
-The planned canonical contract will add schema, trace, corpus/index, route, and
-verification metadata only after it is implemented and tested.
+The new `RAGRequest`, `RAGResponse`, `EvidenceChunk`, `ClaimVerification`,
+`VerificationSummary`, and `ProgressEvent` models cover the wire modes
+`two-step`, `agentic`, `graph`, and `multi-agent`. The response includes
+versioned evidence links, raw score provenance, confidence/calibration
+metadata, run metrics, trace and corpus/index versions, and typed route history.
+Supported claims must reference evidence present in the same response.
+
+`adapt_agent_response()` explicitly maps the existing research-assistant
+`AgentResponse` to the canonical schema using deterministic legacy source IDs.
+The original five-field `AgentResponse` JSON remains unchanged. Runtime
+migration is deferred to the service and entry-point work in Steps 1.2–1.3.
 
 ---
 
@@ -177,6 +191,7 @@ verification metadata only after it is implemented and tested.
 │   ├── __init__.py
 │   ├── main.py
 │   ├── config.py
+│   ├── contracts.py
 │   ├── observability.py
 │   ├── progress.py
 │   ├── schemas.py
@@ -550,6 +565,8 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 - [x] Two-step and agentic local-PDF RAG.
 - [x] Retrieval attribution and optional embedding-similarity reranking.
 - [x] Single and multi-agent LangGraph prototypes with bounded retries.
+- [x] Versioned canonical request, response, evidence, verification, metrics,
+  route, and progress-event models with legacy compatibility.
 - [x] Ten-question dataset, reviewed document labels, reproducible input/config
   manifest, and two-step RAGAS runner.
 - [x] Local tests for configuration, CLI, schemas, and retrieval behavior.
@@ -565,7 +582,8 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 
 ### Planned reliability and productization
 
-- [ ] Canonical response and error contracts.
+- [x] Canonical request/response/evidence/verification/metrics/event models.
+- [ ] Canonical runtime adoption and error contracts.
 - [ ] Persistent, incremental hybrid retrieval with measured reranking.
 - [ ] Application-service boundary shared by CLI, graphs, evaluation, and API.
 - [ ] Thin API and explainability UI.

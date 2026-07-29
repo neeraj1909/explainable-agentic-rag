@@ -1,5 +1,6 @@
 from enum import Enum
-from pydantic import BaseModel, Field, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class NextAction(str, Enum):
@@ -18,6 +19,8 @@ class SourceUsed(BaseModel):
 
 
 class AgentResponse(BaseModel):
+    """Legacy research-assistant response retained as an unchanged public contract."""
+
     model_config = ConfigDict(extra="forbid")
 
     answer: str = Field(description="Concise answer grounded in retrieved evidence.")
