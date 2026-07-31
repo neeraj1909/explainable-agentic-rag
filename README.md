@@ -29,9 +29,13 @@ generic chatbot experience.
   defaults, corpus/index paths, feature flags, and Phoenix configuration.
 - Strict versioned request, response, evidence, verification, confidence,
   metrics, route, and progress-event contracts with a legacy response adapter.
+- A small `RAGService` application seam with injectable mode handlers,
+  canonical answer/stream entry points, run/trace context propagation, and
+  framework-neutral retrieval, verification, and checkpoint ports.
 - Ten curated evaluation questions with reviewed document relevance labels, a
   no-LLM provenance manifest, and a RAGAS runner for the two-step baseline.
-- Forty-seven local tests covering typed configuration, schemas, CLI behavior,
+- Fifty-one local tests covering typed configuration, schemas, service
+  boundaries, CLI behavior,
   comparison orchestration, retrieval configuration, attribution, evaluation
   ground truth, and manifest reproducibility.
 
@@ -53,8 +57,8 @@ generic chatbot experience.
 - The checked baseline manifest freezes inputs and configuration, but no paid
   remote-model run or performance metrics have been approved or recorded.
 - Runtime output shapes still differ between the research assistant, RAG CLI,
-  single graph, and multi-agent graph; the canonical contract exists but those
-  entry points have not yet migrated to it.
+  single graph, and multi-agent graph. The canonical service and contracts now
+  exist, but those runtime entry points have not yet migrated to them.
 - There is no HTTP API, web UI, CI workflow, or container deployment yet.
 
 See [Architecture](docs/architecture.md) for current and target diagrams, and
@@ -95,7 +99,9 @@ flowchart TD
 
 The two-step and agentic modes are selected directly by the RAG CLI. The two
 LangGraph implementations are separate entry points; there is no production
-supervisor routing among all four modes.
+supervisor routing among all four modes. `app/services/rag_service.py` and
+`app/bootstrap.py` now provide the shared canonical application seam, but the
+legacy entry points remain directly wired until the next migration step.
 
 ## Target improvements
 
@@ -103,8 +109,8 @@ The next programme of work is deliberately evidence-first:
 
 1. Use the frozen corpus/configuration baseline to make subsequent evaluation
    runs reproducible and comparable.
-2. Adopt the canonical response contract through a small application-service
-   boundary shared by CLI, graphs, evaluation, and future API code.
+2. Migrate CLI, graphs, and evaluation to the canonical application-service
+   boundary, leaving future API code as another thin adapter.
 3. Evaluate all four RAG modes, including quality, retrieval, latency, cost,
    tool calls, retries, and failure rate.
 4. Replace token overlap with claim-to-evidence verification.
@@ -121,9 +127,10 @@ architecture in [docs/architecture.md](docs/architecture.md#target-architecture)
 
 ## Output contracts
 
-A strict canonical v1 schema now exists in `app/contracts.py`, but the current
-runtime entry points have not migrated to it yet. The examples below therefore
-remain the actual public output shapes.
+A strict canonical v1 schema exists in `app/contracts.py`, and the shared
+`RAGService` can return or stream it through injected mode handlers. The current
+runtime entry points have not migrated to that service yet, so the examples
+below remain the actual public output shapes.
 
 The research assistant currently returns:
 
@@ -169,7 +176,7 @@ Supported claims must reference evidence present in the same response.
 `adapt_agent_response()` explicitly maps the existing research-assistant
 `AgentResponse` to the canonical schema using deterministic legacy source IDs.
 The original five-field `AgentResponse` JSON remains unchanged. Runtime
-migration is deferred to the service and entry-point work in Steps 1.2–1.3.
+entry-point adoption is deferred to Step 1.3.
 
 ---
 
@@ -189,12 +196,21 @@ migration is deferred to the service and entry-point work in Steps 1.2–1.3.
 │           └── manifest.json
 ├── app/
 │   ├── __init__.py
+│   ├── bootstrap.py
 │   ├── main.py
 │   ├── config.py
 │   ├── contracts.py
 │   ├── observability.py
 │   ├── progress.py
 │   ├── schemas.py
+│   ├── ports/
+│   │   ├── __init__.py
+│   │   ├── checkpoints.py
+│   │   ├── retrieval.py
+│   │   └── verification.py
+│   ├── services/
+│   │   ├── __init__.py
+│   │   └── rag_service.py
 │   ├── tools/
 │   │   ├── __init__.py
 │   │   ├── retrieval_tools.py
@@ -230,6 +246,7 @@ migration is deferred to the service and entry-point work in Steps 1.2–1.3.
 │   ├── test_rag_cli.py
 │   ├── test_rag_compare.py
 │   ├── test_rag_retriever.py
+│   ├── test_rag_service.py
 │   ├── test_run_manifest.py
 │   └── test_schemas.py
 └── docs/

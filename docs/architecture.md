@@ -9,9 +9,9 @@ code that exists today.
 The project is a local prototype for comparing document-grounded RAG patterns.
 It has multiple entry points, shared retrieval utilities, Phoenix/OpenTelemetry
 instrumentation, a reproducible input manifest, and strict canonical contract
-definitions. It does not yet have a shared application-service boundary,
-runtime adoption of the canonical contract, a persistent index, an HTTP API, or
-production deployment packaging.
+definitions. It now also has a shared application-service seam, but the existing
+runtime entry points have not adopted it. It does not yet have a persistent
+index, an HTTP API, or production deployment packaging.
 
 ## Current entry points
 
@@ -29,6 +29,22 @@ The entry points do not currently emit the canonical response or share one error
 schema. `app/contracts.py` defines the versioned target wire shape, while the
 RAG CLI still selects a mode directly and no top-level router chooses among all
 four local-PDF workflows.
+
+## Current application-service seam
+
+`app/services/rag_service.py` now provides the canonical `answer()` and
+`stream()` use cases. It dispatches injected per-mode callables, creates one
+run context per invocation, normalizes progress metadata, and rejects responses
+whose mode or run identity conflicts with the request. `app/bootstrap.py` is the
+composition root and can capture an active OpenTelemetry trace without loading
+documents, constructing provider clients, or importing delivery adapters.
+
+The retrieval and verification ports exchange canonical `EvidenceChunk` and
+`VerificationSummary` values rather than LangChain document or tool payloads.
+The checkpoint port deliberately exposes only generic load/save semantics keyed
+by `thread_id`; the LangGraph-specific adapters and production mode wiring are
+still pending. This keeps the seam independently testable while Step 1.3 moves
+the existing CLI and graph implementations behind it.
 
 ## Current local-PDF data flow
 
@@ -64,6 +80,12 @@ cosine similarity. It is not a cross-encoder.
 - `app/contracts.py` defines strict versioned request, response, evidence,
   verification, metrics, route, and progress-event models plus the explicit
   legacy response adapter.
+- `app/ports/` defines narrow framework-neutral boundaries for canonical
+  retrieval, verification, and checkpoint access.
+- `app/services/rag_service.py` owns canonical mode dispatch, answer/stream
+  entry points, and run-context consistency checks.
+- `app/bootstrap.py` composes the service and supplies default run/trace
+  identity without constructing network dependencies during import.
 - `app/observability.py` registers Phoenix/OpenTelemetry and instruments
   LangChain calls.
 - `app/rag/loaders.py` loads PDF pages and attaches source/page metadata.
@@ -136,7 +158,8 @@ the trace store as sensitive data and review it before sharing.
 - There is no lexical/BM25 retrieval or rank fusion.
 - There is no measured cross-encoder reranker.
 - Runtime output and failure contracts vary by entry point despite the new
-  canonical contract definitions.
+  canonical service and contract definitions; production mode adapters are not
+  wired yet.
 - Human review is not interactive or durable.
 - Only the two-step mode has a RAGAS runner.
 - There are no HTTP, UI, CI, Docker application, or end-to-end layers.
