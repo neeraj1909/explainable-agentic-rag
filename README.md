@@ -17,9 +17,10 @@ generic chatbot experience.
 - Baseline **two-step RAG**: retrieve one top-k evidence set, then answer.
 - **Agentic RAG**: expose `retrieve_documents` as a tool so the model can decide
   whether and how often to retrieve.
-- A comparison CLI for running two-step and agentic RAG side by side.
-- Source attribution containing file, chunk, page, retriever score, selected
-  rank, optional reranker score, and a selection rationale.
+- One local-PDF CLI for selecting two-step, agentic, single-graph, or
+  multi-agent RAG, plus a comparison view for two-step and agentic RAG.
+- Source attribution containing file, chunk, page, retriever score and rank,
+  selected rank, optional reranker score, and a selection rationale.
 - A single LangGraph workflow with classification, retrieval, rewrite/retry,
   heuristic verification, finalization, streaming, and an interrupt path.
 - An orchestrator-led multi-agent graph with planner, retriever, explainer,
@@ -32,12 +33,16 @@ generic chatbot experience.
 - A small `RAGService` application seam with injectable mode handlers,
   canonical answer/stream entry points, run/trace context propagation, and
   framework-neutral retrieval, verification, and checkpoint ports.
+- Production adapters that translate all existing LangChain and LangGraph
+  workflows into the canonical response/event contracts. CLI entry points are
+  thin views over the same service and accept injected fakes in tests.
 - Ten curated evaluation questions with reviewed document relevance labels, a
   no-LLM provenance manifest, and a RAGAS runner for the two-step baseline.
-- Fifty-one local tests covering typed configuration, schemas, service
+- Sixty-eight local tests covering typed configuration, schemas, service
   boundaries, CLI behavior,
-  comparison orchestration, retrieval configuration, attribution, evaluation
-  ground truth, and manifest reproducibility.
+  cross-mode adapters, injectable graph nodes, comparison orchestration,
+  retrieval configuration, attribution, evaluation ground truth, and manifest
+  reproducibility.
 
 ## Important current limitations
 
@@ -47,18 +52,18 @@ generic chatbot experience.
   similarity pass, not a cross-encoder.
 - Verification uses a token-overlap heuristic from
   `calculate_faithfulness_stub`; it is not NLI or claim-level entailment.
-- The single graph can interrupt for review, but its CLI path automatically
-  approves the demo instead of asking the user.
-- The multi-agent module runs a hard-coded demo query and does not yet expose a
-  general CLI.
+- The single graph can interrupt for review and returns
+  `next_action=human_review`, but the CLI cannot yet collect a decision and
+  durably resume that run.
+- The multi-agent workflow has a general CLI, but its file-backed checkpoint
+  store remains a local demo rather than a concurrent production store.
 - RAGAS currently evaluates only two-step RAG. No generated metric report is
   checked in, so the repository does not yet demonstrate that one mode
   outperforms another.
 - The checked baseline manifest freezes inputs and configuration, but no paid
   remote-model run or performance metrics have been approved or recorded.
-- Runtime output shapes still differ between the research assistant, RAG CLI,
-  single graph, and multi-agent graph. The canonical service and contracts now
-  exist, but those runtime entry points have not yet migrated to them.
+- Evaluation still calls the two-step implementation directly instead of
+  selecting all four local-PDF modes through the canonical service.
 - There is no HTTP API, web UI, CI workflow, or container deployment yet.
 
 See [Architecture](docs/architecture.md) for current and target diagrams, and
@@ -77,18 +82,19 @@ flowchart TD
     L --> E[OpenAI embeddings]
     E --> I[In-memory vector index]
 
-    Q[User query] --> C{Selected entry point}
-    C --> B[Two-step RAG]
-    C --> A[Agentic RAG]
-    C --> G[Single LangGraph]
-    C --> M[Multi-agent LangGraph demo]
+    Q[User query] --> C[CLI entry point]
+    C --> S[RAGService]
+    S --> B[Two-step adapter]
+    S --> A[Agentic adapter]
+    S --> G[Single LangGraph adapter]
+    S --> M[Multi-agent LangGraph adapter]
 
     I --> B
     I --> A
     I --> G
     I --> M
 
-    B --> O[Answer and source metadata]
+    B --> O[Canonical response or progress event]
     A --> O
     G --> V[Token-overlap verifier]
     V --> O
@@ -97,11 +103,11 @@ flowchart TD
     O --> T[Phoenix / OpenTelemetry spans]
 ```
 
-The two-step and agentic modes are selected directly by the RAG CLI. The two
-LangGraph implementations are separate entry points; there is no production
-supervisor routing among all four modes. `app/services/rag_service.py` and
-`app/bootstrap.py` now provide the shared canonical application seam, but the
-legacy entry points remain directly wired until the next migration step.
+The RAG CLI selects any of the four local-PDF modes through one `RAGService`.
+The dedicated graph modules and research assistant use the same service and
+canonical output contract while retaining their human-readable views. Mode
+selection is explicit; there is still no automatic supervisor that chooses a
+workflow for the caller.
 
 ## Target improvements
 
@@ -109,9 +115,9 @@ The next programme of work is deliberately evidence-first:
 
 1. Use the frozen corpus/configuration baseline to make subsequent evaluation
    runs reproducible and comparable.
-2. Migrate CLI, graphs, and evaluation to the canonical application-service
-   boundary, leaving future API code as another thin adapter.
-3. Evaluate all four RAG modes, including quality, retrieval, latency, cost,
+2. Use the canonical application-service boundary from evaluation and a future
+   thin API adapter.
+3. Evaluate all four local-PDF modes, including quality, retrieval, latency, cost,
    tool calls, retries, and failure rate.
 4. Replace token overlap with claim-to-evidence verification.
 5. Add persisted ingestion, dense plus BM25 retrieval, rank fusion, and a
@@ -127,42 +133,70 @@ architecture in [docs/architecture.md](docs/architecture.md#target-architecture)
 
 ## Output contracts
 
-A strict canonical v1 schema exists in `app/contracts.py`, and the shared
-`RAGService` can return or stream it through injected mode handlers. The current
-runtime entry points have not migrated to that service yet, so the examples
-below remain the actual public output shapes.
+A strict canonical v1 schema exists in `app/contracts.py`. `app.main`,
+`app.rag.cli`, and both graph module CLIs now return it through the shared
+`RAGService`; streamed progress events use the same schema version and the
+final item is always one `RAGResponse`.
 
-The research assistant currently returns:
-
-```json
-{
-  "answer": "Concise answer grounded in retrieved evidence.",
-  "confidence": 0.82,
-  "sources_used": [],
-  "unsupported_claims": [],
-  "next_action": "no_follow_up_needed"
-}
-```
-
-The single LangGraph workflow currently returns:
+A representative JSON response is:
 
 ```json
 {
+  "schema_version": "1.0",
+  "mode": "graph",
   "answer": "Concise answer grounded in retrieved evidence.",
-  "sources": [
+  "explanation": "The answer passed the current graph verifier.",
+  "evidence": [
     {
-      "source": "docs/paper.pdf",
+      "document_id": "docs/paper.pdf",
       "chunk_id": "chunk-03",
+      "source": "docs/paper.pdf",
       "page": 4,
-      "retriever_score": 0.82,
-      "reranker_score": 0.91,
+      "content": "Retrieved passage text.",
+      "scores": [
+        {
+          "name": "retriever",
+          "value": 0.82,
+          "rank": 1,
+          "method": "vectorstore_raw_score"
+        }
+      ],
+      "selected_rank": 1,
       "reason_selected": "Contains direct evidence for the central claim."
     }
   ],
-  "faithfulness_score": 0.87,
-  "unsupported_claims": [],
-  "verified": true,
-  "retry_count": 0
+  "verification": {
+    "status": "verified",
+    "verified": true,
+    "score": 0.87,
+    "method": "token_overlap_stub",
+    "claims": [],
+    "unsupported_claims": []
+  },
+  "confidence": {
+    "score": 0.87,
+    "method": "verification_score",
+    "calibrated": false,
+    "calibration_method": null
+  },
+  "metrics": {
+    "latency_ms": 123.4,
+    "input_tokens": null,
+    "output_tokens": null,
+    "total_tokens": null,
+    "estimated_cost_usd": null,
+    "model_calls": 0,
+    "embedding_calls": 0,
+    "retrieval_calls": 1,
+    "tool_calls": 0,
+    "retry_count": 0
+  },
+  "run_id": "generated-run-id",
+  "trace_id": null,
+  "corpus_version": null,
+  "index_version": null,
+  "route_history": [],
+  "next_action": "no_follow_up_needed"
 }
 ```
 
@@ -175,8 +209,9 @@ Supported claims must reference evidence present in the same response.
 
 `adapt_agent_response()` explicitly maps the existing research-assistant
 `AgentResponse` to the canonical schema using deterministic legacy source IDs.
-The original five-field `AgentResponse` JSON remains unchanged. Runtime
-entry-point adoption is deferred to Step 1.3.
+The original five-field `AgentResponse` model remains available as the internal
+structured-output contract; `app.main --json` exposes its canonical adapted
+form.
 
 ---
 
@@ -223,6 +258,7 @@ entry-point adoption is deferred to Step 1.3.
 │   │   ├── compare.py
 │   │   ├── config.py
 │   │   ├── loaders.py
+│   │   ├── mode_adapters.py
 │   │   ├── prompts.py
 │   │   ├── retriever.py
 │   │   ├── splitter.py
@@ -243,6 +279,9 @@ entry-point adoption is deferred to Step 1.3.
 ├── notebooks/
 ├── tests/
 │   ├── test_config.py
+│   ├── test_entrypoint_contracts.py
+│   ├── test_graph_dependencies.py
+│   ├── test_mode_adapters.py
 │   ├── test_rag_cli.py
 │   ├── test_rag_compare.py
 │   ├── test_rag_retriever.py
@@ -416,6 +455,11 @@ uv run python -m app.rag.cli \
     --k 5
 ```
 
+The same command accepts `--mode graph` and `--mode multi-agent`. Graph modes
+also accept `--max-retries`, `--thread-id`, and `--stream`; progress events are
+written to stderr so `--json` leaves one parseable canonical response on
+stdout.
+
 Compare baseline two-step RAG with agentic RAG:
 
 ```bash
@@ -474,19 +518,22 @@ uv run python -m app.graphs.agentic_rag_graph \
 ```
 
 Add `--json` for the raw final object or `--stream` for graph progress events.
-The graph contains an interrupt-and-resume branch, but the current CLI does not
-ask for a decision: it auto-approves the demo review. Treat this as a prototype
-path, not a durable human-approval control.
+The graph contains an interrupt-and-resume branch. If review is required, the
+CLI returns a canonical response with `next_action=human_review`; collecting a
+decision and durably resuming the same run remain future work.
 
-### Multi-agent LangGraph demo
+### Multi-agent LangGraph workflow
 
 ```bash
-uv run python -m app.graphs.multi_agent_graph
+uv run python -m app.graphs.multi_agent_graph \
+    --query "What are the main contributions of the SafeSpeech paper?" \
+    --k 5 \
+    --thread-id safespeech-review
 ```
 
-This module currently uses a hard-coded question and thread ID. It streams
-planner, retriever, explainer, verifier, and routing events, then stores local
-demo checkpoint data under `.langgraph_checkpoints/`.
+Add `--stream` to print planner, retriever, explainer, verifier, and routing
+events, or `--json` for the canonical final response. Checkpoint data is stored
+under `.langgraph_checkpoints/` by default.
 
 ### Inspect command surfaces without model calls
 
@@ -497,6 +544,7 @@ or calling a model:
 uv run python -m app.main --help
 uv run python -m app.rag.cli --help
 uv run python -m app.graphs.agentic_rag_graph --help
+uv run python -m app.graphs.multi_agent_graph --help
 ```
 
 ---
@@ -587,6 +635,8 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 - [x] Ten-question dataset, reviewed document labels, reproducible input/config
   manifest, and two-step RAGAS runner.
 - [x] Local tests for configuration, CLI, schemas, and retrieval behavior.
+- [x] Canonical service adoption across the research, RAG CLI, and graph entry
+  points, with injectable mode and graph dependencies.
 
 ### Partial capabilities
 
@@ -600,9 +650,10 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 ### Planned reliability and productization
 
 - [x] Canonical request/response/evidence/verification/metrics/event models.
-- [ ] Canonical runtime adoption and error contracts.
+- [x] Canonical runtime adoption across existing entry points.
+- [ ] Shared public error contracts.
 - [ ] Persistent, incremental hybrid retrieval with measured reranking.
-- [ ] Application-service boundary shared by CLI, graphs, evaluation, and API.
+- [ ] Application-service boundary shared by evaluation and a future API.
 - [ ] Thin API and explainability UI.
 - [ ] CI, container packaging, integration tests, and end-to-end evidence.
 

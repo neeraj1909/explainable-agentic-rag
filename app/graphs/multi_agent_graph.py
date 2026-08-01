@@ -1,33 +1,31 @@
 from __future__ import annotations
 
+import argparse
 import json
+import sys
+from collections.abc import Sequence
+from contextlib import redirect_stdout
+from dataclasses import dataclass
 from functools import partial
 from pathlib import Path
-from typing import Any, Literal, NotRequired, TypedDict
+from typing import Any
 from pydantic import BaseModel, Field
 
 from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import RunnableConfig
 from langgraph.checkpoint.memory import InMemorySaver, PersistentDict
 from langgraph.graph import StateGraph, START, END
 
 from app.config import get_llm_client
+from app.contracts import ProgressEvent, RAGMode, RAGRequest, RAGResponse
+from app.graphs.state import AgentName, MultiAgentRAGState
 from app.rag.config import TOP_K
 from app.rag.retriever import build_attributed_retriever
 from app.rag.two_step_rag import format_context
 from app.tools.verification_tools import calculate_faithfulness_stub
 from app.observability import setup_phoenix_tracing
 
-
-AgentName = Literal[
-    "query_planner",
-    "retriever_agent",
-    "explainer_agent",
-    "verifier_agent",
-    "finalize",
-]
 
 CHECKPOINT_DIR = Path(".langgraph_checkpoints")
 CHECKPOINT_FILE = CHECKPOINT_DIR / "multi_agent_graph.pkl"
@@ -44,19 +42,6 @@ def build_persistent_checkpointer(
             filename=str(checkpoint_file),
         )
     )
-
-
-class StreamEvent(BaseModel):
-    event: str
-    agent: str | None = None
-    decision: str = None
-    reason: str | None = None
-    step: int | None = None
-    retry_count: int | None = None
-    verified: bool | None = None
-    faithfulness_score: float | None = None
-    message: str
-    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 class RouteStepModel(BaseModel):
@@ -127,38 +112,6 @@ class FinalOutput(BaseModel):
 
     task_plan: list[str] = Field(default_factory=list)
     route_history: list[dict[str, Any]] = Field(default_factory=list)
-
-
-class MultiAgentRAGState(TypedDict, total=False):
-    question: str
-    query: NotRequired[str]
-
-    task_plan: NotRequired[list[str]]
-    next_agent: NotRequired[AgentName]
-    route_history: NotRequired[list[dict[str, Any]]]
-    orchestrator_decision_reason: NotRequired[str]
-
-    docs: NotRequired[list[Document]]
-    context: NotRequired[str]
-    relevance_reason: NotRequired[str]
-
-    answer: NotRequired[str]
-    explanation: NotRequired[str]
-
-    faithfulness_score: NotRequired[float]
-    unsupported_claims: NotRequired[list[str]]
-    needs_verification: NotRequired[bool]
-    verified: NotRequired[bool]
-    verification_method: NotRequired[str]
-    verification_verdict: NotRequired[str]
-
-    retry_count: NotRequired[int]
-    max_retries: NotRequired[int]
-
-    needs_human_review: NotRequired[bool]
-    human_review_reason: NotRequired[str]
-
-    final: NotRequired[dict[str, Any]]
 
 
 query_planner_prompt = ChatPromptTemplate.from_template(
@@ -444,11 +397,16 @@ class VerifierAgent:
     Agent responsible only for checking whether the answer is supported by context.
     """
 
-    def __init__(self, faithfulness_threshold: float = 0.50):
+    def __init__(
+        self,
+        faithfulness_threshold: float = 0.50,
+        verifier: Any = calculate_faithfulness_stub,
+    ):
         self.faithfulness_threshold = faithfulness_threshold
+        self.verifier = verifier
 
     def __call__(self, state: MultiAgentRAGState) -> dict[str, Any]:
-        raw_result = calculate_faithfulness_stub(
+        raw_result = self.verifier(
             answer=state.get("answer", ""),
             evidence=state.get("context", ""),
             threshold=self.faithfulness_threshold,
@@ -491,66 +449,16 @@ def route_from_orchestrator(state: MultiAgentRAGState) -> AgentName:
     return state.get("next_agent", "finalize")
 
 
-def _latest_route_from_update(update: dict[str, Any]) -> dict[str, Any] | None:
-    for node_payload in update.values():
-        if not isinstance(node_payload, dict):
-            continue
-
-        route_history = node_payload.get("route_history", [])
-
-        if route_history:
-            return route_history[-1]
-
-    return None
-
-
-def _stream_event_from_update(update: dict[str, Any]) -> StreamEvent:
-    node_name = next(iter(update.keys()))
-    node_payload = update[node_name]
-
-    if not isinstance(node_payload, dict):
-        return StreamEvent(
-            event="node_update",
-            agent=node_name,
-            message=f"{node_name} emitted an update.",
-            payload={"raw": str(node_payload)},
-        )
-
-    latest_route = _latest_route_from_update(update)
-
-    if latest_route:
-        return StreamEvent(
-            event="agent_step",
-            agent=latest_route.get("agent", node_name),
-            decision=latest_route.get("decision"),
-            reason=latest_route.get("reason"),
-            step=latest_route.get("step"),
-            retry_count=latest_route.get("retry_count"),
-            verified=latest_route.get("verified"),
-            faithfulness_score=latest_route.get("faithfulness_score"),
-            message=(
-                f"{latest_route.get('agent', node_name)} -> "
-                f"{latest_route.get('decision')}: "
-                f"{latest_route.get('reason')}"
-            ),
-            payload=node_payload,
-        )
-
-    return StreamEvent(
-        event="node_update",
-        agent=node_name,
-        retry_count=node_payload.get("retry_count"),
-        verified=node_payload.get("verified"),
-        faithfulness_score=node_payload.get("faithfulness_score"),
-        message=f"{node_name} completed.",
-        payload=node_payload,
-    )
-
-
 def _doc_metadata(doc: Document | dict[str, Any]) -> dict[str, Any]:
     if isinstance(doc, dict):
         return doc.get("metadata", {})
     return doc.metadata
+
+
+def _doc_content(doc: Document | dict[str, Any]) -> str | None:
+    if isinstance(doc, dict):
+        return doc.get("page_content") or doc.get("content")
+    return doc.page_content
 
 
 def finalize(state: MultiAgentRAGState) -> dict[str, Any]:
@@ -566,7 +474,9 @@ def finalize(state: MultiAgentRAGState) -> dict[str, Any]:
                 "source": metadata.get("source"),
                 "chunk_id": metadata.get("chunk_id"),
                 "page": metadata.get("page"),
+                "content": _doc_content(doc),
                 "retriever_score": metadata.get("retriever_score"),
+                "retriever_rank": metadata.get("retriever_rank"),
                 "reranker_score": metadata.get("reranker_score"),
                 "selected_rank": metadata.get("selected_rank"),
                 "reason_selected": metadata.get("reason_selected"),
@@ -608,9 +518,57 @@ def finalize(state: MultiAgentRAGState) -> dict[str, Any]:
     return {"final": final_output.model_dump()}
 
 
+@dataclass(slots=True)
+class MultiAgentGraphNodes:
+    """Injectable specialist nodes for the orchestrator-led graph."""
+
+    orchestrator: Any
+    query_planner: Any
+    retriever: Any
+    explainer: Any
+    verifier: Any
+    finalizer: Any
+
+
+def build_multi_agent_graph_nodes(
+    k: int = TOP_K,
+    *,
+    retriever: Any | None = None,
+    llm: Any | None = None,
+    query_chain: Any | None = None,
+    answer_chain: Any | None = None,
+    verifier: Any = calculate_faithfulness_stub,
+) -> MultiAgentGraphNodes:
+    """Construct specialist nodes while allowing complete fake injection."""
+
+    resolved_retriever = (
+        retriever if retriever is not None else build_attributed_retriever(k=k)
+    )
+    if query_chain is None or answer_chain is None:
+        resolved_llm = llm if llm is not None else get_llm_client()
+        query_chain = (
+            query_chain or query_planner_prompt | resolved_llm | StrOutputParser()
+        )
+        answer_chain = (
+            answer_chain or explainer_prompt | resolved_llm | StrOutputParser()
+        )
+
+    return MultiAgentGraphNodes(
+        orchestrator=OrchestratorAgent(),
+        query_planner=QueryPlannerAgent(query_chain),
+        retriever=RetrieverAgent(resolved_retriever),
+        explainer=ExplainerAgent(answer_chain),
+        verifier=VerifierAgent(verifier=verifier),
+        finalizer=finalize,
+    )
+
+
 def build_multi_agent_rag_graph(
     k: int = TOP_K,
     checkpoint_file: Path = CHECKPOINT_FILE,
+    *,
+    nodes: MultiAgentGraphNodes | None = None,
+    checkpointer: Any | None = None,
 ):
     """
     Build an orchestrator-led multi-agent RAG workflow using existing project
@@ -625,26 +583,16 @@ def build_multi_agent_rag_graph(
     - Finalizer: returns auditable final payload.
     """
 
-    llm = get_llm_client()
-    retriever = build_attributed_retriever(k=k)
-
-    query_chain = query_planner_prompt | llm | StrOutputParser()
-    answer_chain = explainer_prompt | llm | StrOutputParser()
-
-    orchestrator = OrchestratorAgent()
-    query_planner = QueryPlannerAgent(query_chain)
-    retriever_agent = RetrieverAgent(retriever)
-    explainer_agent = ExplainerAgent(answer_chain)
-    verifier_agent = VerifierAgent()
+    resolved_nodes = nodes or build_multi_agent_graph_nodes(k=k)
 
     graph = StateGraph(MultiAgentRAGState)
 
-    graph.add_node("orchestrator", orchestrator)
-    graph.add_node("query_planner", query_planner)
-    graph.add_node("retriever_agent", retriever_agent)
-    graph.add_node("explainer_agent", explainer_agent)
-    graph.add_node("verifier_agent", verifier_agent)
-    graph.add_node("finalize", finalize)
+    graph.add_node("orchestrator", resolved_nodes.orchestrator)
+    graph.add_node("query_planner", resolved_nodes.query_planner)
+    graph.add_node("retriever_agent", resolved_nodes.retriever)
+    graph.add_node("explainer_agent", resolved_nodes.explainer)
+    graph.add_node("verifier_agent", resolved_nodes.verifier)
+    graph.add_node("finalize", resolved_nodes.finalizer)
 
     graph.add_edge(START, "orchestrator")
 
@@ -666,9 +614,13 @@ def build_multi_agent_rag_graph(
     graph.add_edge("verifier_agent", "orchestrator")
     graph.add_edge("finalize", END)
 
-    checkpointer = build_persistent_checkpointer(checkpoint_file)
+    resolved_checkpointer = (
+        checkpointer
+        if checkpointer is not None
+        else build_persistent_checkpointer(checkpoint_file)
+    )
 
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile(checkpointer=resolved_checkpointer)
 
 
 def stream_multi_agent_rag_graph_event(
@@ -677,64 +629,23 @@ def stream_multi_agent_rag_graph_event(
     max_retries: int = 2,
     thread_id: str = "default",
     checkpoint_file: Path = CHECKPOINT_FILE,
-) -> dict[str, Any]:
-    graph = build_multi_agent_rag_graph(
+    *,
+    service: Any | None = None,
+):
+    resolved_service = service or _build_multi_agent_service(
         k=k,
         checkpoint_file=checkpoint_file,
     )
-
-    config: RunnableConfig = {
-        "configurable": {
-            "thread_id": thread_id,
-        }
-    }
-
-    inputs = {
-        "question": question,
-        "query": "",
-        "retry_count": 0,
-        "max_retries": max_retries,
-        "route_history": [],
-    }
-
-    yield StreamEvent(
-        event="graph_start",
-        agent="graph",
-        message="Starting multi-agent RAG graph.",
-        payload={
-            "question": question,
-            "thread_id": thread_id,
-            "max_retries": max_retries,
-        },
-    ).model_dump()
-
-    final_result: dict[str, Any] | None = None
-
-    for update in graph.stream(
-        inputs,
-        config=config,
-        stream_mode="updates",
-    ):
-        event = _stream_event_from_update(update)
-
-        if "finalize" in update:
-            final_result = update["finalize"].get("final")
-
-        yield event.model_dump()
-
-    graph.checkpointer.storage.sync()
-    graph.checkpointer.writes.sync()
-    graph.checkpointer.blobs.sync()
-
-    yield StreamEvent(
-        event="graph_end",
-        agent="graph",
-        message="Multi-agent RAG graph completed.",
-        payload={
-            "final": final_result,
-            "thread_id": thread_id,
-        },
-    ).model_dump()
+    yield from resolved_service.stream(
+        RAGRequest(
+            query=question,
+            mode=RAGMode.multi_agent,
+            top_k=k,
+            max_retries=max_retries,
+            thread_id=thread_id,
+            stream=True,
+        )
+    )
 
 
 def print_multi_agent_rag_stream(
@@ -742,35 +653,90 @@ def print_multi_agent_rag_stream(
     k: int = TOP_K,
     max_retries: int = 2,
     thread_id: str = "default",
-) -> dict[str, Any] | None:
-    final_result = None
+    *,
+    service: Any | None = None,
+) -> RAGResponse | None:
+    final_result: RAGResponse | None = None
 
     for event in stream_multi_agent_rag_graph_event(
         question=question,
         k=k,
         max_retries=max_retries,
         thread_id=thread_id,
+        service=service,
     ):
-        print(f"[{event['event']}] {event['message']}")
-
-        if event["event"] == "graph_end":
-            final_result = event["payload"].get("final")
+        if isinstance(event, ProgressEvent):
+            print(f"[{event.event}] {event.message}")
+        else:
+            final_result = event
 
     return final_result
 
 
-if __name__ == "__main__":
-    setup_phoenix_tracing()
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the canonical orchestrator-led multi-agent RAG workflow."
+    )
+    parser.add_argument("--query", required=True, help="Question to answer.")
+    parser.add_argument("--k", type=int, default=TOP_K)
+    parser.add_argument("--max-retries", type=int, default=2)
+    parser.add_argument("--thread-id", default="multi-agent-cli")
+    parser.add_argument("--json", action="store_true")
+    parser.add_argument("--stream", action="store_true")
+    return parser.parse_args(argv)
 
-    final = print_multi_agent_rag_stream(
-        question="What are the capabilities of Neeraj in AI and ML?",
-        k=5,
-        thread_id="multi-agent-stream-demo",
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    service: Any | None = None,
+) -> None:
+    args = parse_args(argv)
+    with redirect_stdout(sys.stderr):
+        setup_phoenix_tracing()
+
+    resolved_service = service or _build_multi_agent_service(k=args.k)
+    request = RAGRequest(
+        query=args.query,
+        mode=RAGMode.multi_agent,
+        top_k=args.k,
+        max_retries=args.max_retries,
+        thread_id=args.thread_id,
+        stream=args.stream,
+    )
+    if args.stream:
+        final: RAGResponse | None = None
+        for item in resolved_service.stream(request):
+            if isinstance(item, ProgressEvent):
+                print(f"[{item.event}] {item.message}", file=sys.stderr)
+            else:
+                final = item
+        if final is None:
+            raise RuntimeError("multi-agent stream ended without a final response")
+    else:
+        final = resolved_service.answer(request)
+
+    if args.json:
+        print(final.model_dump_json(indent=2))
+    else:
+        from app.rag.cli import format_canonical_response
+
+        print(format_canonical_response(final))
+
+
+def _build_multi_agent_service(
+    *,
+    k: int,
+    checkpoint_file: Path | None = None,
+):
+    from app.bootstrap import build_default_rag_service
+
+    return build_default_rag_service(
+        modes=(RAGMode.multi_agent,),
+        top_k=k,
+        checkpoint_file=checkpoint_file,
     )
 
-    if final:
-        print("\nFinal answer:")
-        print(final["answer"])
 
-        print("\nSources:")
-        print(json.dumps(final["sources"], indent=2))
+if __name__ == "__main__":
+    main()

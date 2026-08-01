@@ -1,6 +1,7 @@
 import json
 
 from app.rag import cli
+from app.contracts import RAGMode, RAGResponse
 
 
 def test_parse_args_supports_mode_and_k():
@@ -148,3 +149,54 @@ def test_main_prints_human_readable_text_by_default(monkeypatch, capsys):
     output = capsys.readouterr().out
     assert "2-Step RAG" in output
     assert "A readable answer." in output
+
+
+def test_main_prints_canonical_graph_json_with_injected_service(
+    monkeypatch,
+    capsys,
+):
+    class FakeService:
+        def answer(self, request):
+            assert request.mode is RAGMode.graph
+            return RAGResponse(
+                mode=request.mode,
+                answer="Canonical graph answer.",
+                run_id="run-cli-test",
+            )
+
+    monkeypatch.setattr(cli, "setup_phoenix_tracing", lambda: print("tracing ready"))
+
+    cli.main(
+        [
+            "--query",
+            "Use the graph.",
+            "--mode",
+            "graph",
+            "--json",
+        ],
+        service=FakeService(),
+    )
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert "tracing ready" in captured.err
+    assert payload["schema_version"] == "1.0"
+    assert payload["mode"] == "graph"
+    assert payload["answer"] == "Canonical graph answer."
+
+
+def test_compare_json_contains_canonical_schema_for_both_modes(capsys):
+    class FakeService:
+        def answer(self, request):
+            return RAGResponse(mode=request.mode, answer=f"{request.mode.value} answer")
+
+    cli.main(
+        ["--query", "Compare modes.", "--mode", "compare", "--json"],
+        service=FakeService(),
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["two_step_rag"]["result"]["schema_version"] == "1.0"
+    assert payload["two_step_rag"]["result"]["mode"] == "two-step"
+    assert payload["agentic_rag"]["result"]["schema_version"] == "1.0"
+    assert payload["agentic_rag"]["result"]["mode"] == "agentic"

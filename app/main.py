@@ -1,11 +1,15 @@
 import argparse
 import json
+import sys
+from collections.abc import Sequence
+from contextlib import redirect_stdout
 from typing import Any
 
 from langchain.agents import create_agent
 from langchain.agents.structured_output import ToolStrategy
 
 from app.config import get_llm_client
+from app.contracts import ProgressEvent, RAGMode, RAGRequest, RAGResponse
 from app.observability import setup_phoenix_tracing
 from app.progress import emit_progress
 from app.schemas import AgentResponse
@@ -15,8 +19,8 @@ from app.tools.verification_tools import (
 )
 
 
-def build_agent(max_results: int = 5):
-    llm = get_llm_client()
+def build_agent(max_results: int = 5, *, llm=None):
+    llm = llm if llm is not None else get_llm_client()
 
     def search_papers_with_limit(query: str) -> str:
         """Search arXiv papers using the configured max_results limit."""
@@ -227,7 +231,7 @@ def stream_agent_response(agent: Any, user_message: str) -> AgentResponse | None
     return structured_response
 
 
-def main():
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run the research assistant agent.")
     parser.add_argument("--query", required=True, help="User search query")
     parser.add_argument(
@@ -241,29 +245,74 @@ def main():
         "--stream", action="store_true", help="Stream the agent's response in real-time"
     )
 
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def format_research_response(response: RAGResponse) -> str:
+    """Keep the original readable research view over the canonical response."""
+
+    confidence = response.confidence.score or 0.0
+    legacy = AgentResponse(
+        answer=response.answer,
+        confidence=confidence,
+        sources_used=[
+            {
+                "title": chunk.title or chunk.source or chunk.document_id,
+                "url": chunk.source,
+                "reason_used": chunk.reason_selected or "Used as retrieved evidence.",
+            }
+            for chunk in response.evidence
+        ],
+        unsupported_claims=response.verification.unsupported_claims,
+        next_action=response.next_action or "no_follow_up_needed",
+    )
+    return format_agent_response(legacy)
+
+
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    service: Any | None = None,
+) -> None:
+    args = parse_args(argv)
 
     # Configure Phoenix/OpenInference before constructing or running LangChain
     # objects, so the agent/LLM/tool spans are captured.
-    setup_phoenix_tracing()
+    with redirect_stdout(sys.stderr):
+        setup_phoenix_tracing()
 
-    agent = build_agent(max_results=args.max_results)
-
-    user_message = args.query
-
+    resolved_service = service or _build_research_service(max_results=args.max_results)
+    request = RAGRequest(
+        query=args.query,
+        mode=RAGMode.research_assistant,
+        stream=args.stream,
+    )
     if args.stream:
-        structured_response = stream_agent_response(agent, user_message)
-        if structured_response is None:
-            raise RuntimeError("Streaming run finished without a structured response.")
+        response: RAGResponse | None = None
+        for item in resolved_service.stream(request):
+            if isinstance(item, ProgressEvent):
+                print(f"[{item.event}] {item.message}", file=sys.stderr)
+            else:
+                response = item
+        if response is None:
+            raise RuntimeError("Streaming run finished without a canonical response.")
     else:
-        result = agent.invoke({"messages": [{"role": "user", "content": user_message}]})
-        structured_response = result["structured_response"]
+        response = resolved_service.answer(request)
 
     if args.json:
-        print(structured_response.model_dump_json(indent=2))
+        print(response.model_dump_json(indent=2))
     else:
-        formatted_response = format_agent_response(structured_response)
-        print(formatted_response)
+        print(format_research_response(response))
+
+
+def _build_research_service(*, max_results: int):
+    from app.bootstrap import build_default_rag_service
+
+    return build_default_rag_service(
+        modes=(RAGMode.research_assistant,),
+        top_k=1,
+        max_results=max_results,
+    )
 
 
 if __name__ == "__main__":

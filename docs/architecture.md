@@ -9,26 +9,29 @@ code that exists today.
 The project is a local prototype for comparing document-grounded RAG patterns.
 It has multiple entry points, shared retrieval utilities, Phoenix/OpenTelemetry
 instrumentation, a reproducible input manifest, and strict canonical contract
-definitions. It now also has a shared application-service seam, but the existing
-runtime entry points have not adopted it. It does not yet have a persistent
-index, an HTTP API, or production deployment packaging.
+definitions. Existing command-line entry points now use a shared
+application-service seam and canonical mode adapters. It does not yet have a
+persistent index, an HTTP API, or production deployment packaging.
 
 ## Current entry points
 
 | Entry point | Data source | Orchestration | Current output |
 |---|---|---|---|
-| `app.main` | arXiv/web tools | LangChain tool-calling agent | `AgentResponse` |
-| `app.rag.cli` (`two-step`) | `docs/*.pdf` | Retrieve once, then generate | Answer plus attributed sources |
-| `app.rag.cli` (`agentic`) | `docs/*.pdf` | Model-controlled retrieval tool | Messages, tool calls, and sources |
-| `app.rag.cli` (`compare`) | `docs/*.pdf` | Runs both RAG modes | Two mode-specific result objects |
-| `app.graphs.agentic_rag_graph` | `docs/*.pdf` | Single typed LangGraph | Answer, sources, verifier state, retries |
-| `app.graphs.multi_agent_graph` | `docs/*.pdf` | Orchestrator-led multi-agent graph | Answer, route history, sources, verifier state |
+| `app.main` | arXiv/web tools | LangChain tool-calling agent | Canonical `RAGResponse` or readable research view |
+| `app.rag.cli` (`two-step`) | `docs/*.pdf` | Retrieve once, then generate | Canonical `RAGResponse` or readable view |
+| `app.rag.cli` (`agentic`) | `docs/*.pdf` | Model-controlled retrieval tool | Canonical `RAGResponse` or readable view |
+| `app.rag.cli` (`graph`) | `docs/*.pdf` | Single typed LangGraph | Canonical response/events or readable view |
+| `app.rag.cli` (`multi-agent`) | `docs/*.pdf` | Orchestrator-led multi-agent graph | Canonical response/events or readable view |
+| `app.rag.cli` (`compare`) | `docs/*.pdf` | Runs two-step and agentic through one service | Two canonical result objects plus measured latency |
+| `app.graphs.agentic_rag_graph` | `docs/*.pdf` | Single typed LangGraph | Canonical response/events or readable view |
+| `app.graphs.multi_agent_graph` | `docs/*.pdf` | Orchestrator-led multi-agent graph | Canonical response/events or readable view |
 | `app.evaluation.run_ragas_eval` | Ten-question JSONL set and `docs/*.pdf` | Two-step RAG plus RAGAS evaluators | Console table and CSV |
 
-The entry points do not currently emit the canonical response or share one error
-schema. `app/contracts.py` defines the versioned target wire shape, while the
-RAG CLI still selects a mode directly and no top-level router chooses among all
-four local-PDF workflows.
+All runtime CLIs emit the versioned canonical response with `--json`; streaming
+paths emit canonical progress events followed by exactly one response. Public
+error normalization is still missing. The caller selects a mode explicitly;
+no top-level supervisor automatically chooses among the four local-PDF
+workflows.
 
 ## Current application-service seam
 
@@ -36,15 +39,18 @@ four local-PDF workflows.
 `stream()` use cases. It dispatches injected per-mode callables, creates one
 run context per invocation, normalizes progress metadata, and rejects responses
 whose mode or run identity conflicts with the request. `app/bootstrap.py` is the
-composition root and can capture an active OpenTelemetry trace without loading
-documents, constructing provider clients, or importing delivery adapters.
+composition root: it shares an LLM and attributed retriever across selected
+modes, builds graph nodes and checkpointers, and captures an active
+OpenTelemetry trace. Importing the module alone does not load documents or
+construct provider clients.
 
 The retrieval and verification ports exchange canonical `EvidenceChunk` and
 `VerificationSummary` values rather than LangChain document or tool payloads.
 The checkpoint port deliberately exposes only generic load/save semantics keyed
-by `thread_id`; the LangGraph-specific adapters and production mode wiring are
-still pending. This keeps the seam independently testable while Step 1.3 moves
-the existing CLI and graph implementations behind it.
+by `thread_id`. Current graph composition accepts injected native LangGraph
+checkpointers; a durable application adapter remains future work. Concrete mode
+adapters translate LangChain/LangGraph values at the service boundary and can
+be tested with fakes.
 
 ## Current local-PDF data flow
 
@@ -60,8 +66,8 @@ flowchart LR
     OPTIONAL -->|No| SELECT[Selected chunks]
     OPTIONAL -->|Yes| SECOND[Embedding-similarity rerank]
     SECOND --> SELECT
-    SELECT --> MODE[Selected RAG or graph workflow]
-    MODE --> RESULT[Mode-specific result]
+    SELECT --> MODE[Selected RAG or graph adapter]
+    MODE --> RESULT[Canonical response]
 ```
 
 `app/rag/retriever.py` rebuilds the index when
@@ -85,7 +91,7 @@ cosine similarity. It is not a cross-encoder.
 - `app/services/rag_service.py` owns canonical mode dispatch, answer/stream
   entry points, and run-context consistency checks.
 - `app/bootstrap.py` composes the service and supplies default run/trace
-  identity without constructing network dependencies during import.
+  identity, shared runtime dependencies, graph nodes, and checkpointers.
 - `app/observability.py` registers Phoenix/OpenTelemetry and instruments
   LangChain calls.
 - `app/rag/loaders.py` loads PDF pages and attaches source/page metadata.
@@ -95,6 +101,9 @@ cosine similarity. It is not a cross-encoder.
   and records retrieval spans.
 - `app/rag/two_step_rag.py`, `app/rag/agentic_rag.py`, and
   `app/rag/compare.py` implement the CLI-selectable RAG modes.
+- `app/rag/mode_adapters.py` translates existing workflow values into
+  `RAGResponse` and `ProgressEvent` without leaking framework-specific payloads
+  through the service boundary.
 - `app/graphs/agentic_rag_graph.py` implements the single graph, including
   rewrite, bounded retry, heuristic verification, and an interrupt branch.
 - `app/graphs/multi_agent_graph.py` implements planner, retriever, explainer,
@@ -109,13 +118,14 @@ Retrieved chunks can carry:
 - `page`
 - `chunk_id`
 - `retriever_score`
+- `retriever_rank`
 - `selected_rank`
 - `reranker_score`
 - `reason_selected`
 
-The final shape depends on the selected workflow. Some paths preserve the full
-attribution object, while the agentic CLI derives a smaller source list from
-tool messages.
+Every workflow maps available attribution into canonical `EvidenceChunk`
+objects. The agentic adapter derives these chunks from retrieval-tool messages;
+missing metadata stays explicitly absent rather than being fabricated.
 
 Graph verification currently calls `calculate_faithfulness_stub`, a token
 overlap heuristic. Its score is useful for exercising conditional graph
@@ -126,8 +136,9 @@ specific chunks.
 
 The single graph compiles with `InMemorySaver`, so its checkpoints live only in
 the current process. It has an `interrupt()` branch and a `Command(resume=...)`
-helper, but the command-line demo automatically supplies approval instead of
-collecting a user decision. That is not a durable approval boundary.
+helper. The service returns a canonical `human_review` next action when the
+graph interrupts, but the CLI does not yet collect a decision or durably resume
+the run.
 
 The multi-agent graph combines `InMemorySaver` with LangGraph
 `PersistentDict` stores and explicitly syncs them to
@@ -157,9 +168,10 @@ the trace store as sensitive data and review it before sharing.
   does not yet propagate its version or enforce document-level access policy.
 - There is no lexical/BM25 retrieval or rank fusion.
 - There is no measured cross-encoder reranker.
-- Runtime output and failure contracts vary by entry point despite the new
-  canonical service and contract definitions; production mode adapters are not
-  wired yet.
+- Runtime success responses and progress events are canonical; public failure
+  normalization is not yet implemented.
+- Evaluation still uses the legacy two-step callable rather than selecting all
+  four modes through `RAGService`.
 - Human review is not interactive or durable.
 - Only the two-step mode has a RAGAS runner.
 - There are no HTTP, UI, CI, Docker application, or end-to-end layers.

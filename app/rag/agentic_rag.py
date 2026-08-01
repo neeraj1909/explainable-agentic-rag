@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 
 from app.config import get_llm_client
 from app.rag.config import TOP_K
+from app.rag.mode_adapters import AgenticModeAdapter
 from app.rag.retriever import build_attributed_retriever
 
 
@@ -19,8 +20,10 @@ class RetrieveArgs(BaseModel):
     )
 
 
-def make_retrieval_tool(k: int = TOP_K):
-    retriever = build_attributed_retriever(k=k)
+def make_retrieval_tool(k: int = TOP_K, *, retriever=None):
+    resolved_retriever = (
+        retriever if retriever is not None else build_attributed_retriever(k=k)
+    )
 
     @tool("retrieve_documents", args_schema=RetrieveArgs)
     def retrieve_documents(query: str, k: int = TOP_K) -> str:
@@ -31,7 +34,7 @@ def make_retrieval_tool(k: int = TOP_K):
         from the indexed documents. Do not use for small talk or general advice
         that does not require the local corpus.
         """
-        docs = retriever.invoke(query)
+        docs = resolved_retriever.invoke(query)
         limit = min(k, len(docs))
 
         results = []
@@ -42,6 +45,7 @@ def make_retrieval_tool(k: int = TOP_K):
                     "chunk_id": doc.metadata.get("chunk_id"),
                     "page": doc.metadata.get("page"),
                     "retriever_score": doc.metadata.get("retriever_score"),
+                    "retriever_rank": doc.metadata.get("retriever_rank"),
                     "reranker_score": doc.metadata.get("reranker_score"),
                     "selected_rank": doc.metadata.get("selected_rank"),
                     "reason_selected": doc.metadata.get("reason_selected"),
@@ -61,9 +65,9 @@ def make_retrieval_tool(k: int = TOP_K):
     return retrieve_documents
 
 
-def build_agentic_rag(k: int = TOP_K):
-    llm = get_llm_client()
-    retrieval_tool = make_retrieval_tool(k=k)
+def build_agentic_rag(k: int = TOP_K, *, llm=None, retriever=None):
+    resolved_llm = llm if llm is not None else get_llm_client()
+    retrieval_tool = make_retrieval_tool(k=k, retriever=retriever)
 
     system_prompt = """
 You are an agentic RAG assistant.
@@ -86,7 +90,16 @@ Prefer concise, grounded answers.
 """
 
     return create_agent(
-        model=llm,
+        model=resolved_llm,
         tools=[retrieval_tool],
         system_prompt=system_prompt,
     )
+
+
+def build_agentic_mode(
+    k: int = TOP_K,
+    *,
+    llm=None,
+    retriever=None,
+) -> AgenticModeAdapter:
+    return AgenticModeAdapter(build_agentic_rag(k=k, llm=llm, retriever=retriever))

@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections.abc import Sequence
-from typing import Any, Literal, NotRequired, TypedDict
+from contextlib import redirect_stdout
+from dataclasses import dataclass
+from typing import Any, Literal
 
-from langchain_core.documents import Document
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnableConfig
@@ -14,42 +16,14 @@ from langgraph.checkpoint.memory import InMemorySaver
 from langgraph.types import interrupt, Command
 
 from app.config import get_llm_client
+from app.contracts import ProgressEvent, RAGMode, RAGRequest, RAGResponse
+from app.graphs.state import RagGraphState
 from app.rag.config import TOP_K
 from app.rag.prompts import rag_prompt
 from app.rag.retriever import build_attributed_retriever
 from app.rag.two_step_rag import format_context
 from app.tools.verification_tools import calculate_faithfulness_stub
 from app.observability import setup_phoenix_tracing
-
-
-class RagGraphState(TypedDict):
-    question: str
-    query: NotRequired[str]
-
-    query_type: NotRequired[str]
-    needs_retrieval: NotRequired[bool]
-
-    docs: NotRequired[list[Document]]
-    context: NotRequired[str]
-
-    is_relevant: NotRequired[bool]
-    relevance_reason: NotRequired[str]
-
-    answer: NotRequired[str]
-
-    faithfulness_score: NotRequired[float]
-    unsupported_claims: NotRequired[list[str]]
-    verified: NotRequired[bool]
-
-    retry_count: NotRequired[int]
-    max_retries: NotRequired[int]
-
-    final: NotRequired[dict[str, Any]]
-
-    needs_human_review: NotRequired[bool]
-    human_review_reason: NotRequired[str]
-    human_feedback: NotRequired[str]
-    human_approved: NotRequired[bool]
 
 
 rewrite_prompt = ChatPromptTemplate.from_template(
@@ -70,14 +44,16 @@ rewrite_prompt = ChatPromptTemplate.from_template(
 )
 
 
-def build_rag_graph(k: int = TOP_K):
-    retriever = build_attributed_retriever(k=k)
-    llm = get_llm_client()
+@dataclass(slots=True)
+class RagGraphNodes:
+    """Injectable node dependencies for the single RAG graph."""
 
-    answer_chain = rag_prompt | llm | StrOutputParser()
-    rewrite_chain = rewrite_prompt | llm | StrOutputParser()
+    retriever: Any
+    answer_chain: Any
+    rewrite_chain: Any
+    verifier: Any = calculate_faithfulness_stub
 
-    def classify_query(state: RagGraphState) -> dict[str, Any]:
+    def classify_query(self, state: RagGraphState) -> dict[str, Any]:
         question = state["question"]
         lowered = question.lower()
 
@@ -91,10 +67,10 @@ def build_rag_graph(k: int = TOP_K):
             "max_retries": state.get("max_retries", 2),
         }
 
-    def retrieve(state: RagGraphState) -> dict[str, Any]:
+    def retrieve(self, state: RagGraphState) -> dict[str, Any]:
         query = state.get("query", state["question"])
 
-        docs = retriever.invoke(query)
+        docs = self.retriever.invoke(query)
         context = format_context(docs)
 
         return {
@@ -102,7 +78,7 @@ def build_rag_graph(k: int = TOP_K):
             "context": context,
         }
 
-    def grade_relevance(state: RagGraphState) -> dict[str, Any]:
+    def grade_relevance(self, state: RagGraphState) -> dict[str, Any]:
         docs = state.get("docs", [])
 
         if not docs:
@@ -116,8 +92,8 @@ def build_rag_graph(k: int = TOP_K):
             "relevance_reason": f"Retrieved {len(docs)} documents.",
         }
 
-    def rewrite_query(state: RagGraphState) -> dict[str, Any]:
-        rewritten = rewrite_chain.invoke(
+    def rewrite_query(self, state: RagGraphState) -> dict[str, Any]:
+        rewritten = self.rewrite_chain.invoke(
             {
                 "question": state["question"],
                 "query": state.get("query", state["question"]),
@@ -130,11 +106,11 @@ def build_rag_graph(k: int = TOP_K):
             "retry_count": state.get("retry_count", 0) + 1,
         }
 
-    def generate_answer(state: RagGraphState) -> dict[str, Any]:
+    def generate_answer(self, state: RagGraphState) -> dict[str, Any]:
         if not state.get("needs_retrieval", True):
             return {"answer": "Please ask a document-grounded question."}
 
-        answer = answer_chain.invoke(
+        answer = self.answer_chain.invoke(
             {
                 "question": state["question"],
                 "context": state.get("context", ""),
@@ -143,8 +119,8 @@ def build_rag_graph(k: int = TOP_K):
 
         return {"answer": answer}
 
-    def verify_claims(state: RagGraphState) -> dict[str, Any]:
-        raw_result = calculate_faithfulness_stub(
+    def verify_claims(self, state: RagGraphState) -> dict[str, Any]:
+        raw_result = self.verifier(
             answer=state.get("answer", ""),
             evidence=state.get("context", ""),
         )
@@ -162,7 +138,7 @@ def build_rag_graph(k: int = TOP_K):
             "verified": verified,
         }
 
-    def finalize(state: RagGraphState) -> dict[str, Any]:
+    def finalize(self, state: RagGraphState) -> dict[str, Any]:
         docs = state.get("docs", [])
 
         sources = [
@@ -170,8 +146,11 @@ def build_rag_graph(k: int = TOP_K):
                 "source": doc.metadata.get("source"),
                 "chunk_id": doc.metadata.get("chunk_id"),
                 "page": doc.metadata.get("page"),
+                "content": doc.page_content,
                 "retriever_score": doc.metadata.get("retriever_score"),
+                "retriever_rank": doc.metadata.get("retriever_rank"),
                 "reranker_score": doc.metadata.get("reranker_score"),
+                "selected_rank": doc.metadata.get("selected_rank"),
                 "reason_selected": doc.metadata.get("reason_selected"),
             }
             for doc in docs
@@ -188,7 +167,7 @@ def build_rag_graph(k: int = TOP_K):
 
         return {"final": final}
 
-    def human_review(state: RagGraphState) -> dict[str, Any]:
+    def human_review(self, state: RagGraphState) -> dict[str, Any]:
         review_payload = {
             "question": state["question"],
             "query": state.get("query"),
@@ -207,6 +186,43 @@ def build_rag_graph(k: int = TOP_K):
             "human_feedback": human_response.get("feedback"),
             "human_approved": human_response.get("approved", False),
         }
+
+
+def build_rag_graph_nodes(
+    k: int = TOP_K,
+    *,
+    retriever: Any | None = None,
+    llm: Any | None = None,
+    answer_chain: Any | None = None,
+    rewrite_chain: Any | None = None,
+    verifier: Any = calculate_faithfulness_stub,
+) -> RagGraphNodes:
+    """Construct node collaborators; callers may inject every dependency."""
+
+    resolved_retriever = (
+        retriever if retriever is not None else build_attributed_retriever(k=k)
+    )
+    if answer_chain is None or rewrite_chain is None:
+        resolved_llm = llm if llm is not None else get_llm_client()
+        answer_chain = answer_chain or rag_prompt | resolved_llm | StrOutputParser()
+        rewrite_chain = (
+            rewrite_chain or rewrite_prompt | resolved_llm | StrOutputParser()
+        )
+    return RagGraphNodes(
+        retriever=resolved_retriever,
+        answer_chain=answer_chain,
+        rewrite_chain=rewrite_chain,
+        verifier=verifier,
+    )
+
+
+def build_rag_graph(
+    k: int = TOP_K,
+    *,
+    nodes: RagGraphNodes | None = None,
+    checkpointer: Any | None = None,
+):
+    resolved_nodes = nodes or build_rag_graph_nodes(k=k)
 
     def route_after_classification(
         state: RagGraphState,
@@ -239,14 +255,14 @@ def build_rag_graph(k: int = TOP_K):
 
     graph = StateGraph(RagGraphState)
 
-    graph.add_node("classify_query", classify_query)
-    graph.add_node("retrieve", retrieve)
-    graph.add_node("grade_relevance", grade_relevance)
-    graph.add_node("rewrite_query", rewrite_query)
-    graph.add_node("generate_answer", generate_answer)
-    graph.add_node("verify_claims", verify_claims)
-    graph.add_node("finalize", finalize)
-    graph.add_node("human_review", human_review)
+    graph.add_node("classify_query", resolved_nodes.classify_query)
+    graph.add_node("retrieve", resolved_nodes.retrieve)
+    graph.add_node("grade_relevance", resolved_nodes.grade_relevance)
+    graph.add_node("rewrite_query", resolved_nodes.rewrite_query)
+    graph.add_node("generate_answer", resolved_nodes.generate_answer)
+    graph.add_node("verify_claims", resolved_nodes.verify_claims)
+    graph.add_node("finalize", resolved_nodes.finalize)
+    graph.add_node("human_review", resolved_nodes.human_review)
 
     graph.add_edge(START, "classify_query")
     graph.add_conditional_edges(
@@ -285,9 +301,9 @@ def build_rag_graph(k: int = TOP_K):
     graph.add_edge("human_review", "finalize")
     graph.add_edge("finalize", END)
 
-    checkpointer = InMemorySaver()
-
-    return graph.compile(checkpointer=checkpointer)
+    return graph.compile(
+        checkpointer=checkpointer if checkpointer is not None else InMemorySaver()
+    )
 
 
 def resume_rag_graph(
@@ -315,91 +331,49 @@ def stream_rag_graph_progress(
     question: str,
     k: int = TOP_K,
     thread_id: str = "default",
+    max_retries: int = 2,
+    *,
+    service: Any | None = None,
 ):
-    graph = build_rag_graph(k=k)
-
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-
-    initial_state = {
-        "question": question,
-        "retry_count": 0,
-        "max_retries": 2,
-    }
-
-    for event in graph.stream(initial_state, config=config, stream_mode="updates"):
-        if "retrieve" in event:
-            yield "retrieval completed"
-
-        elif "grade_relevance" in event:
-            update = event["grade_relevance"]
-            if update.get("is_relevant"):
-                yield "retrieval relevance passed"
-            else:
-                yield "retrieval relevance failed"
-
-        elif "rewrite_query" in event:
-            yield "retry triggered. query rewritten."
-
-        elif "generate_answer" in event:
-            yield "final answer draft generated"
-
-        elif "verify_claims" in event:
-            update = event["verify_claims"]
-            if update.get("verified"):
-                yield "verifier passed"
-            else:
-                yield "verifier failed"
-
-        elif "human_review" in event:
-            yield "human review required"
-
-        elif "finalize" in event:
-            yield {
-                "event": "final answer generated",
-                "result": event["finalize"].get("final"),
-            }
-        yield event
+    resolved_service = service or _build_graph_service(k=k)
+    yield from resolved_service.stream(
+        RAGRequest(
+            query=question,
+            mode=RAGMode.graph,
+            top_k=k,
+            max_retries=max_retries,
+            thread_id=thread_id,
+            stream=True,
+        )
+    )
 
 
 def run_rag_graph(
-    question: str, k: int = TOP_K, thread_id: str = "default"
-) -> dict[str, Any]:
-    graph = build_rag_graph(k=k)
-
-    config: RunnableConfig = {"configurable": {"thread_id": thread_id}}
-
-    result = graph.invoke(
-        {
-            "question": question,
-            "retry_count": 0,
-            "max_retries": 2,
-        },
-        config,
-    )
-
-    if "__interrupt__" in result:
-        print(f"Human review required: {result['__interrupt__']}")
-
-        # collect human input somehow
-        approved = True
-        feedback = "Approved after manual review."
-
-        final_result = resume_rag_graph(
-            graph=graph,
-            approved=approved,
-            feedback=feedback,
+    question: str,
+    k: int = TOP_K,
+    thread_id: str = "default",
+    max_retries: int = 2,
+    *,
+    service: Any | None = None,
+) -> RAGResponse:
+    resolved_service = service or _build_graph_service(k=k)
+    return resolved_service.answer(
+        RAGRequest(
+            query=question,
+            mode=RAGMode.graph,
+            top_k=k,
+            max_retries=max_retries,
             thread_id=thread_id,
         )
-
-        print(final_result)
-
-    else:
-        print(result["final"])
-
-    return result["final"]
+    )
 
 
-def format_rag_graph_output(result: dict[str, Any]) -> str:
+def format_rag_graph_output(result: RAGResponse | dict[str, Any]) -> str:
+    if isinstance(result, RAGResponse):
+        from app.rag.cli import format_canonical_response
+
+        return format_canonical_response(result)
+
     lines: list[str] = []
 
     lines.append("RAG Graph")
@@ -472,47 +446,77 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Print the raw JSON result instead of human-readable output.",
+        help="Print the canonical versioned JSON response.",
     )
     parser.add_argument(
         "--stream", action="store_true", help="Stream graph progress events."
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Maximum retrieval/verification retries.",
+    )
+    parser.add_argument(
+        "--thread-id",
+        default="default",
+        help="Stable graph checkpoint thread identifier.",
     )
 
     return parser.parse_args(argv)
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    service: Any | None = None,
+) -> None:
     args = parse_args(argv)
-    setup_phoenix_tracing()
+    with redirect_stdout(sys.stderr):
+        setup_phoenix_tracing()
 
     if args.stream:
+        final_result: RAGResponse | None = None
         for progress in stream_rag_graph_progress(
             question=args.query,
             k=args.k,
-            thread_id="cli-stream",
+            thread_id=args.thread_id,
+            max_retries=args.max_retries,
+            service=service,
         ):
-            if (
-                isinstance(progress, dict)
-                and progress.get("event") == "final answer generated"
-            ):
-                final_result = progress.get("result")
-                continue
-
-            print(progress)
+            if isinstance(progress, ProgressEvent):
+                print(f"[{progress.event}] {progress.message}", file=sys.stderr)
+            else:
+                final_result = progress
 
         if final_result is not None:
             print()
-            print(format_rag_graph_output(final_result))
+            if args.json:
+                print(final_result.model_dump_json(indent=2))
+            else:
+                print(format_rag_graph_output(final_result))
 
         return
 
-    result = run_rag_graph(args.query, k=args.k)
+    result = run_rag_graph(
+        args.query,
+        k=args.k,
+        thread_id=args.thread_id,
+        max_retries=args.max_retries,
+        service=service,
+    )
 
     if args.json:
-        print(json.dumps(result, indent=2, ensure_ascii=False))
+        print(result.model_dump_json(indent=2))
         return
 
     print(format_rag_graph_output(result))
+
+
+def _build_graph_service(*, k: int):
+    from app.bootstrap import build_default_rag_service
+
+    return build_default_rag_service(modes=(RAGMode.graph,), top_k=k)
 
 
 if __name__ == "__main__":

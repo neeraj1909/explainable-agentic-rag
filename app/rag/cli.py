@@ -1,30 +1,35 @@
 import argparse
 import json
 import sys
-from contextlib import redirect_stdout
 from collections.abc import Sequence
+from contextlib import redirect_stdout
 from typing import Any, Literal
 
-from app.rag.agentic_rag import build_agentic_rag
-from app.rag.config import TOP_K
-from app.rag.two_step_rag import build_two_step_rag
-from app.rag.compare import run_comparison
+from app.contracts import ProgressEvent, RAGMode, RAGRequest, RAGResponse
 from app.observability import setup_phoenix_tracing
+from app.rag.config import TOP_K
+from app.rag.compare import run_comparison
 
-RagMode = Literal["two-step", "agentic", "compare"]
-RAG_MODES: tuple[str, ...] = ("two-step", "agentic", "compare")
+RagMode = Literal["two-step", "agentic", "graph", "multi-agent", "compare"]
+RAG_MODES: tuple[str, ...] = (
+    "two-step",
+    "agentic",
+    "graph",
+    "multi-agent",
+    "compare",
+)
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run baseline two-step RAG, agentic RAG, or compare both."
+        description="Run a canonical RAG mode or compare two-step and agentic RAG."
     )
     parser.add_argument("--query", required=True, help="User question to answer")
     parser.add_argument(
         "--mode",
         choices=RAG_MODES,
         default="two-step",
-        help="RAG mode to run: fixed retrieve-then-answer, agentic tool use, or both.",
+        help="RAG mode to run, or compare two-step and agentic RAG.",
     )
     parser.add_argument(
         "--k",
@@ -35,7 +40,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Print raw JSON/LangChain trace output.",
+        help="Print the canonical versioned JSON response.",
+    )
+    parser.add_argument(
+        "--max-retries",
+        type=int,
+        default=2,
+        help="Maximum graph retrieval/verification retries.",
+    )
+    parser.add_argument(
+        "--thread-id",
+        help="Stable thread identifier for checkpointed graph modes.",
+    )
+    parser.add_argument(
+        "--stream",
+        action="store_true",
+        help="Stream canonical progress events before the final response.",
     )
 
     return parser.parse_args(argv)
@@ -172,6 +192,9 @@ def format_two_step_rag(result: dict) -> str:
 
 
 def format_output(result: dict) -> str:
+    if isinstance(result, RAGResponse):
+        return format_canonical_response(result)
+
     mode = result.get("mode")
 
     if (
@@ -188,6 +211,47 @@ def format_output(result: dict) -> str:
         return format_two_step_rag(result)
 
     return json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False)
+
+
+def format_canonical_response(response: RAGResponse) -> str:
+    """Render a canonical response without exposing transport-specific details."""
+
+    titles = {
+        RAGMode.two_step: "2-Step RAG",
+        RAGMode.agentic: "Agentic RAG",
+        RAGMode.graph: "RAG Graph",
+        RAGMode.multi_agent: "Multi-Agent RAG",
+        RAGMode.research_assistant: "Research Assistant",
+    }
+    lines = [titles[response.mode], "-" * 80, "Answer:", response.answer, ""]
+
+    if response.route_history:
+        lines.append("Route:")
+        for route in response.route_history:
+            lines.append(
+                f"  {route.step}. {route.agent} -> {route.decision}: {route.reason}"
+            )
+        lines.append("")
+
+    lines.append("Verification:")
+    lines.append(f"  Status: {response.verification.status.value}")
+    lines.append(f"  Score: {response.verification.score}")
+    lines.append(f"  Retry count: {response.metrics.retry_count}")
+    lines.append("")
+    lines.append("Sources:")
+    if response.evidence:
+        for index, chunk in enumerate(response.evidence, start=1):
+            lines.append(
+                f"  {index}. {chunk.source} "
+                f"| chunk={chunk.chunk_id} "
+                f"| page={chunk.page}"
+            )
+            if chunk.reason_selected:
+                lines.append(f"     Reason: {chunk.reason_selected}")
+    else:
+        lines.append("  No sources retrieved.")
+
+    return "\n".join(lines)
 
 
 def format_compare_output(result: dict) -> str:
@@ -207,7 +271,7 @@ def format_compare_output(result: dict) -> str:
     lines.append(two_step["result"]["answer"])
     lines.append("")
     lines.append("Sources:")
-    for source in two_step["result"].get("sources", []):
+    for source in two_step["result"].get("evidence", []):
         lines.append(
             f"  - {source['source']} "
             f"| chunk={source['chunk_id']} "
@@ -215,69 +279,187 @@ def format_compare_output(result: dict) -> str:
         )
 
     lines.append("")
-    lines.append(format_agentic_rag(agentic))
+    agentic_response = agentic["result"]
+    lines.append("Agentic RAG")
+    lines.append("-" * 80)
+    lines.append(f"Latency: {agentic['latency_seconds']}s")
+    lines.append("Answer:")
+    lines.append(agentic_response["answer"])
+    lines.append("")
+    lines.append("Retrieved sources:")
+    for source in agentic_response.get("evidence", []):
+        lines.append(
+            f"  - {source['source']} "
+            f"| chunk={source['chunk_id']} "
+            f"| page={source['page']}"
+        )
 
     return "\n".join(lines)
 
 
-def run_two_step(query: str, k: int = TOP_K) -> dict[str, Any]:
-    """Run deterministic retrieve-then-generate RAG."""
-    rag_chain = build_two_step_rag(k=k)
-    return rag_chain(query)
+def run_two_step(query: str, k: int = TOP_K) -> RAGResponse:
+    """Run deterministic retrieve-then-generate RAG through the service."""
+
+    service = _build_service((RAGMode.two_step,), top_k=k)
+    return service.answer(RAGRequest(query=query, mode=RAGMode.two_step, top_k=k))
 
 
-def run_agentic(query: str, k: int = TOP_K) -> dict[str, Any]:
-    """Run agentic RAG where the LLM chooses whether to call retrieval."""
-    agent = build_agentic_rag(k=k)
-    result = agent.invoke(
-        {
-            "messages": [
-                {
-                    "role": "user",
-                    "content": query,
-                }
-            ]
-        }
+def run_agentic(query: str, k: int = TOP_K) -> RAGResponse:
+    """Run tool-using RAG through the service."""
+
+    service = _build_service((RAGMode.agentic,), top_k=k)
+    return service.answer(RAGRequest(query=query, mode=RAGMode.agentic, top_k=k))
+
+
+def run_graph(
+    query: str,
+    k: int = TOP_K,
+    *,
+    max_retries: int = 2,
+    thread_id: str | None = None,
+) -> RAGResponse:
+    service = _build_service((RAGMode.graph,), top_k=k)
+    return service.answer(
+        RAGRequest(
+            query=query,
+            mode=RAGMode.graph,
+            top_k=k,
+            max_retries=max_retries,
+            thread_id=thread_id,
+        )
     )
 
-    return {
-        "mode": "agentic_rag",
-        "result": _to_jsonable(result),
-    }
+
+def run_multi_agent(
+    query: str,
+    k: int = TOP_K,
+    *,
+    max_retries: int = 2,
+    thread_id: str | None = None,
+) -> RAGResponse:
+    service = _build_service((RAGMode.multi_agent,), top_k=k)
+    return service.answer(
+        RAGRequest(
+            query=query,
+            mode=RAGMode.multi_agent,
+            top_k=k,
+            max_retries=max_retries,
+            thread_id=thread_id,
+        )
+    )
 
 
-def run_query(mode: RagMode, query: str, k: int = TOP_K) -> dict[str, Any]:
+def run_query(
+    mode: RagMode,
+    query: str,
+    k: int = TOP_K,
+    *,
+    max_retries: int = 2,
+    thread_id: str | None = None,
+    service: Any | None = None,
+) -> RAGResponse | dict[str, Any]:
+    if mode == "compare":
+        if service is None:
+            return run_comparison(query=query, k=k)
+        return run_comparison(query=query, k=k, service=service)
+
+    if service is not None:
+        return service.answer(
+            RAGRequest(
+                query=query,
+                mode=RAGMode(mode),
+                top_k=k,
+                max_retries=max_retries,
+                thread_id=thread_id,
+            )
+        )
+
     if mode == "two-step":
         return run_two_step(query=query, k=k)
 
     if mode == "agentic":
         return run_agentic(query=query, k=k)
 
-    if mode == "compare":
-        # return {
-        #     "question": query,
-        #     "two_step_rag": run_two_step(query=query, k=k),
-        #     "agentic_rag": run_agentic(query=query, k=k),
-        # }
+    if mode == "graph":
+        return run_graph(
+            query=query,
+            k=k,
+            max_retries=max_retries,
+            thread_id=thread_id,
+        )
 
-        return run_comparison(query=query, k=k)
+    if mode == "multi-agent":
+        return run_multi_agent(
+            query=query,
+            k=k,
+            max_retries=max_retries,
+            thread_id=thread_id,
+        )
 
     raise ValueError(f"Unsupported RAG mode: {mode}")
 
 
-def main(argv: Sequence[str] | None = None) -> None:
+def main(argv: Sequence[str] | None = None, *, service: Any | None = None) -> None:
     args = parse_args(argv)
 
     with redirect_stdout(sys.stderr):
         setup_phoenix_tracing()
 
-    result = run_query(mode=args.mode, query=args.query, k=args.k)
+    if args.stream:
+        if args.mode == "compare":
+            raise ValueError("compare mode does not support streaming")
+        resolved_service = service or _build_service(
+            (RAGMode(args.mode),),
+            top_k=args.k,
+        )
+        request = RAGRequest(
+            query=args.query,
+            mode=RAGMode(args.mode),
+            top_k=args.k,
+            max_retries=args.max_retries,
+            thread_id=args.thread_id,
+            stream=True,
+        )
+        final_response: RAGResponse | None = None
+        for item in resolved_service.stream(request):
+            if isinstance(item, ProgressEvent):
+                print(f"[{item.event}] {item.message}", file=sys.stderr)
+            else:
+                final_response = item
+        if final_response is None:
+            raise RuntimeError("RAG stream ended without a final response")
+        result: RAGResponse | dict[str, Any] = final_response
+    else:
+        if service is None and args.max_retries == 2 and args.thread_id is None:
+            result = run_query(mode=args.mode, query=args.query, k=args.k)
+        else:
+            result = run_query(
+                mode=args.mode,
+                query=args.query,
+                k=args.k,
+                max_retries=args.max_retries,
+                thread_id=args.thread_id,
+                service=service,
+            )
 
     if args.json:
-        print(json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False))
+        if isinstance(result, RAGResponse):
+            print(result.model_dump_json(indent=2))
+        else:
+            print(json.dumps(_to_jsonable(result), indent=2, ensure_ascii=False))
         return
 
-    print(format_output(_to_jsonable(result)))
+    print(
+        format_output(
+            result if isinstance(result, RAGResponse) else _to_jsonable(result)
+        )
+    )
+
+
+def _build_service(modes: Sequence[RAGMode], *, top_k: int):
+    from app.bootstrap import build_default_rag_service
+
+    return build_default_rag_service(modes=modes, top_k=top_k)
 
 
 if __name__ == "__main__":
