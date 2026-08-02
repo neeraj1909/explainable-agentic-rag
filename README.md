@@ -37,9 +37,10 @@ generic chatbot experience.
   workflows into the canonical response/event contracts. CLI entry points are
   thin views over the same service and accept injected fakes in tests.
 - Ten curated evaluation questions with reviewed document relevance labels, a
-  no-LLM provenance manifest, and a RAGAS runner for the two-step baseline.
-- Sixty-eight local tests covering typed configuration, schemas, service
-  boundaries, CLI behavior,
+  no-LLM provenance manifest, and one comparative runner for all four local-PDF
+  modes using public RAGAS 0.4 APIs.
+- Eighty-one local tests covering typed configuration, schemas, service
+  boundaries, CLI and evaluation behavior,
   cross-mode adapters, injectable graph nodes, comparison orchestration,
   retrieval configuration, attribution, evaluation ground truth, and manifest
   reproducibility.
@@ -57,13 +58,14 @@ generic chatbot experience.
   durably resume that run.
 - The multi-agent workflow has a general CLI, but its file-backed checkpoint
   store remains a local demo rather than a concurrent production store.
-- RAGAS currently evaluates only two-step RAG. No generated metric report is
-  checked in, so the repository does not yet demonstrate that one mode
-  outperforms another.
+- The RAGAS harness can evaluate all four local-PDF modes, but no generated
+  metric report is checked in, so the repository does not yet demonstrate that
+  one mode outperforms another.
 - The checked baseline manifest freezes inputs and configuration, but no paid
   remote-model run or performance metrics have been approved or recorded.
-- Evaluation still calls the two-step implementation directly instead of
-  selecting all four local-PDF modes through the canonical service.
+- The current evaluation score set covers answer/evidence quality. Comparative
+  latency, cost, tool-call, retry, and retrieval-label analysis remains Step
+  2.2 work.
 - There is no HTTP API, web UI, CI workflow, or container deployment yet.
 
 See [Architecture](docs/architecture.md) for current and target diagrams, and
@@ -83,7 +85,9 @@ flowchart TD
     E --> I[In-memory vector index]
 
     Q[User query] --> C[CLI entry point]
+    D[Evaluation dataset] --> EV[Comparative evaluation CLI]
     C --> S[RAGService]
+    EV --> S
     S --> B[Two-step adapter]
     S --> A[Agentic adapter]
     S --> G[Single LangGraph adapter]
@@ -272,14 +276,20 @@ form.
 │   │   └── state.py
 │   └── evaluation/
 │       ├── __init__.py
+│       ├── cli.py
 │       ├── eval_dataset.jsonl
 │       ├── eval_dataset_readable.md
+│       ├── metrics.py
 │       ├── run_manifest.py
-│       └── run_ragas_eval.py
+│       ├── run_ragas_eval.py
+│       └── systems.py
 ├── notebooks/
 ├── tests/
 │   ├── test_config.py
 │   ├── test_entrypoint_contracts.py
+│   ├── test_evaluation_cli.py
+│   ├── test_evaluation_metrics.py
+│   ├── test_evaluation_systems.py
 │   ├── test_graph_dependencies.py
 │   ├── test_mode_adapters.py
 │   ├── test_rag_cli.py
@@ -578,20 +588,32 @@ See
 for the hash algorithm, ground-truth scope, comparison instructions, and
 artifact-retention policy.
 
-The current RAGAS runner evaluates only two-step RAG with faithfulness, context
-precision, context recall, factual correctness, and response relevance:
+Preview a run without constructing provider clients, making network calls, or
+writing artifacts:
 
 ```bash
-mkdir -p evaluation
-uv run python -m app.evaluation.run_ragas_eval
+uv run python -m app.evaluation.run_ragas_eval \
+  --modes two-step agentic graph multi-agent \
+  --limit 2 \
+  --repeat 1 \
+  --output-dir evaluation/smoke \
+  --dry-run
 ```
 
-This is a paid, networked run: it rebuilds the in-memory index, answers all ten
-questions, and makes evaluator-model calls. Results are written to
-`evaluation/ragas_eval_results.csv`. The generated `evaluation/` directory and
-raw run directories under `artifacts/evaluation/` are ignored; only small,
-reviewed summaries should be committed. Comparative evaluation across all four
-modes, latency, cost, tool calls, retries, and failures remains planned.
+Remove `--dry-run` to execute the selected modes. That is a paid, networked
+operation: it builds the in-memory index, generates answers, and calls evaluator
+models for public RAGAS 0.4 `Faithfulness`, `ContextPrecision`, `ContextRecall`,
+`FactualCorrectness`, and `AnswerRelevancy` metrics. The runner creates the
+output directory and writes `manifest.json` plus one `results.jsonl` row per
+question, mode, and repetition. System or evaluator exceptions are retained in
+failed rows, counted in the manifest, and cause a non-zero exit status after
+artifacts are written.
+
+The generated `evaluation/` directory and raw run directories under
+`artifacts/evaluation/` are ignored; only small, reviewed summaries should be
+committed. No paid comparative run has been approved or checked in. Latency,
+cost, tool-call, retry, retrieval-label, and failure-pattern analysis remains
+planned for the next evaluation step.
 
 ## Tests
 
@@ -633,7 +655,7 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 - [x] Versioned canonical request, response, evidence, verification, metrics,
   route, and progress-event models with legacy compatibility.
 - [x] Ten-question dataset, reviewed document labels, reproducible input/config
-  manifest, and two-step RAGAS runner.
+  manifest, and a four-mode public-RAGAS evaluation runner.
 - [x] Local tests for configuration, CLI, schemas, and retrieval behavior.
 - [x] Canonical service adoption across the research, RAG CLI, and graph entry
   points, with injectable mode and graph dependencies.
@@ -644,7 +666,7 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 - [ ] Collect and persist a real user approval or rejection.
 - [x] A token-overlap faithfulness heuristic gates graph retries.
 - [ ] Replace the heuristic with claim-to-evidence verification.
-- [x] A baseline evaluation runner exists.
+- [x] A comparative four-mode evaluation runner exists.
 - [ ] Produce reproducible comparative evidence for all four modes.
 
 ### Planned reliability and productization
@@ -653,7 +675,8 @@ Do not add `--fix` when you only intend to inspect lint findings. Use
 - [x] Canonical runtime adoption across existing entry points.
 - [ ] Shared public error contracts.
 - [ ] Persistent, incremental hybrid retrieval with measured reranking.
-- [ ] Application-service boundary shared by evaluation and a future API.
+- [x] Application-service boundary shared by runtime entry points and evaluation.
+- [ ] Thin API adoption of the same application-service boundary.
 - [ ] Thin API and explainability UI.
 - [ ] CI, container packaging, integration tests, and end-to-end evidence.
 
@@ -666,9 +689,10 @@ An accurate current narrative is:
 > I use LangChain for model, tool, and structured-output integration, and
 > LangGraph for explicit state and bounded routing. This prototype compares
 > fixed and agent-controlled retrieval, preserves source attribution, exposes
-> Phoenix/OpenTelemetry traces, and includes a baseline RAGAS harness. Its
-> present verifier is heuristic and human review is not yet interactive, so
-> those are measured next steps rather than completed reliability claims.
+> Phoenix/OpenTelemetry traces, and includes a four-mode RAGAS harness. No paid
+> comparative result is published yet; its present verifier is heuristic and
+> human review is not yet interactive, so those are measured next steps rather
+> than completed reliability claims.
 
 Be prepared to explain:
 
@@ -678,7 +702,7 @@ Be prepared to explain:
 4. What in-memory and file-backed checkpointing do—and do not—provide.
 5. Why token overlap is not semantic entailment.
 6. How Phoenix traces help inspect model, tool, and retrieval behavior.
-7. Why current RAGAS results cannot establish a winner across all modes.
+7. Why an unexecuted comparative harness cannot establish a winner across modes.
 8. Which evidence gates should precede an API or UI.
 
 ## License

@@ -10,8 +10,9 @@ The project is a local prototype for comparing document-grounded RAG patterns.
 It has multiple entry points, shared retrieval utilities, Phoenix/OpenTelemetry
 instrumentation, a reproducible input manifest, and strict canonical contract
 definitions. Existing command-line entry points now use a shared
-application-service seam and canonical mode adapters. It does not yet have a
-persistent index, an HTTP API, or production deployment packaging.
+application-service seam and canonical mode adapters. A comparative evaluation
+CLI drives the same service for all four local-PDF modes. It does not yet have
+a persistent index, an HTTP API, or production deployment packaging.
 
 ## Current entry points
 
@@ -25,7 +26,7 @@ persistent index, an HTTP API, or production deployment packaging.
 | `app.rag.cli` (`compare`) | `docs/*.pdf` | Runs two-step and agentic through one service | Two canonical result objects plus measured latency |
 | `app.graphs.agentic_rag_graph` | `docs/*.pdf` | Single typed LangGraph | Canonical response/events or readable view |
 | `app.graphs.multi_agent_graph` | `docs/*.pdf` | Orchestrator-led multi-agent graph | Canonical response/events or readable view |
-| `app.evaluation.run_ragas_eval` | Ten-question JSONL set and `docs/*.pdf` | Two-step RAG plus RAGAS evaluators | Console table and CSV |
+| `app.evaluation.run_ragas_eval` | Ten-question JSONL set and `docs/*.pdf` | Selected local-PDF modes through `RAGService`, then public RAGAS metrics | JSON manifest and per-run JSONL rows |
 
 All runtime CLIs emit the versioned canonical response with `--json`; streaming
 paths emit canonical progress events followed by exactly one response. Public
@@ -108,7 +109,14 @@ cosine similarity. It is not a cross-encoder.
   rewrite, bounded retry, heuristic verification, and an interrupt branch.
 - `app/graphs/multi_agent_graph.py` implements planner, retriever, explainer,
   verifier, routing, event streaming, and demo checkpoint persistence.
-- `app/evaluation/run_ragas_eval.py` evaluates only the two-step baseline.
+- `app/evaluation/systems.py` adapts selected local-PDF modes to evaluation
+  questions while sharing one canonical `RAGService`.
+- `app/evaluation/metrics.py` binds samples to the public RAGAS 0.4 collections
+  API and separate native chat/embedding clients.
+- `app/evaluation/cli.py` owns deterministic run ordering, failure rows,
+  manifests, JSONL artifacts, dry-run planning, limits, and repetitions.
+- `app/evaluation/run_ragas_eval.py` retains the historical module path as a
+  thin compatibility entry point.
 
 ## Attribution and verification
 

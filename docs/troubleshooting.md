@@ -107,28 +107,36 @@ If this path prevents a local experiment from completing, use
 being hardened. A production fix needs to persist the pending state, collect an
 explicit approve/reject decision, resume the same thread, and test both paths.
 
-## Multi-agent demo uses the wrong question or stale state
+## Multi-agent run uses stale state
 
-`app.graphs.multi_agent_graph` currently has a hard-coded demo question and
-thread ID in its module entry point. Changeable CLI arguments are planned but
-not implemented.
+`app.graphs.multi_agent_graph` accepts `--query` and `--thread-id`. Reusing a
+thread ID can intentionally load earlier local checkpoint state.
 
 The demo writes `.langgraph_checkpoints/multi_agent_graph.pkl`. If a code or
 schema change makes old local state incompatible, stop all graph processes,
 back up that file, and move it out of `.langgraph_checkpoints/` before retrying.
 The directory is ignored by Git.
 
-## Evaluation fails before writing CSV
+## Evaluation fails or returns a non-zero status
 
-The current runner evaluates only two-step RAG and expects its output directory
-to exist:
+Confirm the selected run without constructing provider clients or writing an
+output directory:
 
 ```bash
-mkdir -p evaluation
-uv run python -m app.evaluation.run_ragas_eval
+uv run python -m app.evaluation.run_ragas_eval \
+  --modes two-step agentic graph multi-agent \
+  --limit 2 \
+  --output-dir evaluation/smoke \
+  --dry-run
 ```
 
-This is a paid, networked operation across ten questions plus evaluator calls.
+Without `--dry-run`, this is a paid, networked operation across the selected
+questions, answer systems, and evaluator calls. The runner creates the output
+directory itself and writes `manifest.json` and `results.jsonl`. A system or
+metric exception is preserved in its JSONL row, increments
+`failed_run_count`, and produces a non-zero process status; inspect those
+artifacts before retrying.
+
 Validate only the dataset without model calls with:
 
 ```bash
@@ -136,8 +144,9 @@ uv run python -c \
     "from app.evaluation.run_ragas_eval import validate_eval_set; validate_eval_set(); print('evaluation dataset valid')"
 ```
 
-The runner imports internal RAGAS metric modules, so a future RAGAS upgrade may
-require import changes. No checked-in CSV currently proves comparative quality.
+The runner targets the public RAGAS 0.4 collections API. Check the locked RAGAS
+version and its migration notes before upgrading. No checked-in metric report
+currently proves comparative quality.
 
 ## Tests or lint checks fail
 

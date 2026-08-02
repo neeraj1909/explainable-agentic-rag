@@ -1,1 +1,1 @@
-"""Evaluation modules for RAGAS/LangSmith experiments."""
+"""Reproducible comparative evaluation for the local-PDF RAG modes."""
